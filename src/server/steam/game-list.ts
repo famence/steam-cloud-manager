@@ -69,7 +69,7 @@ export async function listRemoteGames(rpc: RpcCaller, steamId: string): Promise<
       throw new SteamServiceError(
         'Steam отклонил получение списка Cloud-игр и резервного списка библиотеки. ' +
         'Можно проверить конкретную игру, указав её AppID вручную.',
-        'GAME_LIST_UNAVAILABLE', 502,
+        'GAME_LIST_UNAVAILABLE', 502, error.method ?? 'GetOwnedGames',
       );
     }
     throw error;
