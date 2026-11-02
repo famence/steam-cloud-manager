@@ -1,0 +1,23 @@
+services:
+  steam-cloud-manager:
+    build: .
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      APP_ORIGIN: ${APP_ORIGIN:-http://127.0.0.1:3000}
+      DEMO_MODE: ${DEMO_MODE:-false}
+      ALLOWED_STEAM_IDS: ${ALLOWED_STEAM_IDS:-}
+      SESSION_TTL_MINUTES: ${SESSION_TTL_MINUTES:-60}
+      STEAM_HTTP_PROXY: ${STEAM_HTTP_PROXY:-}
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

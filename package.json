@@ -1,0 +1,47 @@
+{
+  "name": "steam-cloud-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.12" },
+  "scripts": {
+    "dev": "concurrently -k -n api,web \"tsx watch src/server/index.ts\" \"vite --host 127.0.0.1\"",
+    "build": "tsc --noEmit && vite build && tsc -p tsconfig.server.json",
+    "start": "node dist/server/server/index.js",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/server/*.test.ts src/server/steam/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "@fastify/cookie": "11.1.5",
+    "@fastify/rate-limit": "11.2.1",
+    "@fastify/static": "10.1.8",
+    "archiver": "8.0.0",
+    "fastify": "5.12.8",
+    "lucide-react": "^0.468.0",
+    "qrcode": "^1.5.4",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "steam-session": "1.9.4",
+    "steam-user": "5.3.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/archiver": "8.0.0",
+    "@types/node": "^24.0.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "6.2.1",
+    "concurrently": "^9.2.0",
+    "tsx": "^4.20.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
+  },
+  "overrides": {
+    "adm-zip": "0.6.1",
+    "protobufjs": "7.6.6",
+    "glob": "14.0.3",
+    "minimatch": "11.0.4"
+  }
+}
