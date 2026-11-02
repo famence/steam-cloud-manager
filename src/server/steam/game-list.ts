@@ -58,7 +58,7 @@ export async function listRemoteGames(rpc: RpcCaller, steamId: string): Promise<
 
   let response: { games: OwnedGame[]; game_count: number };
   try {
-    response = await rpc.call('GetOwnedGames', {
+    response = await rpc.call<{ games: OwnedGame[]; game_count: number }>('GetOwnedGames', {
       steamid: steamId,
       include_appinfo: true,
       include_played_free_games: true,
