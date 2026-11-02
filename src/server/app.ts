@@ -11,6 +11,7 @@ import { z } from 'zod';
 import type { Config } from './config.js';
 import type { CloudDriver } from './steam/contracts.js';
 import { SteamCloudDriver } from './steam/steam-driver.js';
+import { SteamServiceError } from './steam/protocol.js';
 import { DemoCloudDriver } from './demo-driver.js';
 import { AppError } from './errors.js';
 import { SessionStore, randomId, type Session } from './sessions.js';
@@ -293,7 +294,10 @@ export async function buildApp(options: {
       code = statusCode === 429 ? 'RATE_LIMIT' : 'INVALID_REQUEST';
       message = statusCode === 429 ? 'Слишком много запросов. Подождите немного.' : 'Некорректный запрос.';
     }
-    app.log.warn({ requestId: request.id, code, statusCode }, 'Request failed');
+    // A method identifier is safe to log; never print Steam tokens, cookies, request bodies or file names.
+    app.log.warn({ requestId: request.id, code, statusCode,
+      ...(known instanceof SteamServiceError && known.method ? { steamMethod: known.method } : {}),
+    }, 'Request failed');
     reply.code(statusCode).send({ error: { code, message } });
   });
   app.addHook('onClose', async () => store.close());
