@@ -7,6 +7,7 @@ import type { CloudFile, CloudGame, DeleteResult, LoginInfo } from '../../shared
 import type { CloudDriver, DriverListing } from './contracts.js';
 import { assertAppId, performDeleteBatch, readFileListing, safeInteger } from './cloud-operations.js';
 import { openStorageDownload, type DownloadResponse } from './download.js';
+import { listRemoteGames } from './game-list.js';
 import { SteamRpcTransport, SteamServiceError, safeSteamError, type SteamWireClient } from './protocol.js';
 
 const require = createRequire(import.meta.url);
@@ -199,25 +200,16 @@ export class SteamCloudDriver implements CloudDriver {
 
   async listGames(): Promise<CloudGame[]> {
     const rpc = this.requireRpc();
-    const response = await rpc.call<{ apps: { appid: number; totalcount: number; totalsize: string }[] }>('EnumerateUserApps', {});
-    if (!Array.isArray(response.apps) || response.apps.length > 20_000) {
-      throw new SteamServiceError('Steam вернул некорректный список игр.', 'INVALID_STEAM_RESPONSE');
-    }
-    const games = response.apps.map(app => {
-      assertAppId(app.appid);
-      return {
-        appId: app.appid, name: `App ${app.appid}`,
-        fileCount: safeInteger(app.totalcount, 'количество файлов'), totalBytes: safeInteger(app.totalsize),
-      };
-    });
-    if (new Set(games.map(game => game.appId)).size !== games.length) {
-      throw new SteamServiceError('Steam вернул неоднозначный список игр.', 'INVALID_STEAM_RESPONSE');
-    }
-    if (games.length) {
+    const steamId = this.client?.steamID?.getSteamID64() ?? '';
+    const games = await listRemoteGames(rpc, steamId);
+
+    // When the legacy Cloud inventory RPC works, resolve names through PICS.
+    // Fallback owned-library games already have titles from Player.GetOwnedGames.
+    if (games.length && games.every(game => game.fileCount !== null)) {
       const names = await this.gameNames(games.map(game => game.appId));
       for (const game of games) game.name = names.get(game.appId) ?? game.name;
     }
-    return games.sort((a, b) => b.totalBytes - a.totalBytes || a.name.localeCompare(b.name));
+    return games;
   }
 
   private async gameNames(appIds: number[]): Promise<Map<number, string>> {
