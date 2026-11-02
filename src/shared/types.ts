@@ -9,8 +9,9 @@ export interface LoginInfo {
 export interface CloudGame {
   appId: number;
   name: string;
-  fileCount: number;
-  totalBytes: number;
+  /** Null means Steam's legacy Cloud inventory RPC is unavailable; game was not yet checked individually. */
+  fileCount: number | null;
+  totalBytes: number | null;
 }
 export interface CloudFile {
   name: string;
