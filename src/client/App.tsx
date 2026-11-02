@@ -91,12 +91,19 @@ export default function App() {
   const connected = session?.login.status === 'connected';
   const pageCheckbox = useRef<HTMLInputElement>(null);
   const gamesRequest = useRef(0);
+  const sessionRequest = useRef<Promise<void> | null>(null);
 
-  const readSession = useCallback(async () => {
+  const readSession = useCallback(() => {
+    // StrictMode re-runs the mount effect in development. Share the request so
+    // concurrent responses cannot pair one session's CSRF token with another cookie.
+    if (sessionRequest.current) return sessionRequest.current;
     setSessionLoading(true); setSessionError(null);
-    try { setSession(await api<SessionInfo>('/api/session')); }
-    catch (error) { setSessionError(error instanceof Error ? error.message : 'Сервер недоступен.'); }
-    finally { setSessionLoading(false); }
+    const pending = api<SessionInfo>('/api/session')
+      .then(result => { setSession(result); })
+      .catch(error => { setSessionError(error instanceof Error ? error.message : 'Сервер недоступен.'); })
+      .finally(() => { sessionRequest.current = null; setSessionLoading(false); });
+    sessionRequest.current = pending;
+    return pending;
   }, []);
   useEffect(() => { void readSession(); }, [readSession]);
   useEffect(() => {
