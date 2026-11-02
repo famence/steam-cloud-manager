@@ -16,6 +16,7 @@ const { ServiceMethodCallFromClient } = require('steam-user/enums/EMsg.js') as R
 
 const methods = {
   EnumerateUserApps: ['CCloud_EnumerateUserApps_Request', 'CCloud_EnumerateUserApps_Response'],
+  GetOwnedGames: ['CPlayer_GetOwnedGames_Request', 'CPlayer_GetOwnedGames_Response'],
   GetAppFileChangelist: ['CCloud_GetAppFileChangelist_Request', 'CCloud_GetAppFileChangelist_Response'],
   ClientFileDownload: ['CCloud_ClientFileDownload_Request', 'CCloud_ClientFileDownload_Response'],
   BeginAppUploadBatch: ['CCloud_BeginAppUploadBatch_Request', 'CCloud_BeginAppUploadBatch_Response'],
@@ -41,6 +42,7 @@ export class SteamServiceError extends Error {
     message: string,
     public readonly code = 'STEAM_ERROR',
     public readonly statusCode = 502,
+    public readonly method?: CloudMethod,
   ) {
     super(message);
     this.name = 'SteamServiceError';
@@ -95,9 +97,10 @@ export class SteamRpcTransport implements RpcCaller {
 
       try {
         const bytes = Buffer.from(requestType.encode(requestType.fromObject(payload)).finish());
+        const service = method === 'GetOwnedGames' ? 'Player' : 'Cloud';
         this.client._send({
           msg: ServiceMethodCallFromClient,
-          proto: { target_job_name: `Cloud.${method}#1`, timeout_ms: this.timeoutMs },
+          proto: { target_job_name: `${service}.${method}#1`, timeout_ms: this.timeoutMs },
         }, bytes, (body, header) => {
           if (done) return;
           const result = header.proto?.eresult;
@@ -113,8 +116,12 @@ export class SteamRpcTransport implements RpcCaller {
               84: 'Steam временно ограничил запросы. Попробуйте позже.',
             };
             return finish(new SteamServiceError(
-              messages[result ?? 0] ?? 'Steam не подтвердил выполнение операции. Обновите список файлов.',
+              result === 2
+                ? `Steam вернул общий отказ на запрос ${service}.${method} (EResult 2). Это не подтверждение изменения файлов.`
+                : messages[result ?? 0] ?? `Steam отклонил запрос ${service}.${method}. Код Steam: ${result ?? 'не указан'}.`,
               `STEAM_RESULT_${Number.isInteger(result) ? result : 'UNKNOWN'}`,
+              502,
+              method,
             ));
           }
           try {
