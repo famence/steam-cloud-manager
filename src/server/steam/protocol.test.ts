@@ -106,7 +106,7 @@ test('owned-game fallback uses the Player service and never Cloud namespace', as
     _send(header, body, callback) {
       assert.equal(header.proto.target_job_name, 'Player.GetOwnedGames#1');
       const request = schema.CPlayer_GetOwnedGames_Request.decode(body);
-      assert.equal(request.steamid?.toString(), steamID.getSteamID64());
+      assert.equal(String(request.steamid), steamID.getSteamID64());
       assert.equal(request.include_appinfo, true);
       const response = schema.CPlayer_GetOwnedGames_Response.fromObject({
         game_count: 1, games: [{ appid: 949230, name: 'Cities: Skylines II' }],
