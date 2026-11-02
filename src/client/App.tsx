@@ -133,7 +133,7 @@ export default function App() {
     try {
       const result = await api<{ games: CloudGame[] }>('/api/games');
       if (requestId !== gamesRequest.current) return;
-      const sorted = [...result.games].sort((a, b) => b.totalBytes - a.totalBytes);
+      const sorted = [...result.games].sort((a, b) => (b.totalBytes ?? -1) - (a.totalBytes ?? -1));
       setGames(sorted);
       setSelectedId(current => current ?? sorted[0]?.appId ?? null);
     } catch (error) { if (requestId === gamesRequest.current) { setGamesError(error instanceof Error ? error.message : 'Не удалось загрузить игры.'); if (error instanceof ApiError && error.status === 401) void readSession(); } }
@@ -152,6 +152,11 @@ export default function App() {
     api<FileListing>(`/api/games/${selectedId}/files`, { signal: controller.signal }).then(result => {
       if (!current) return;
       setListing(result); setUpdatedAt(new Date());
+      const size = result.files.reduce((sum, file) => sum + file.size, 0);
+      setGames(previous => previous.map(game => game.appId === result.appId
+        ? { ...game, fileCount: result.files.length, totalBytes: size } : game));
+      setManualGame(previous => previous?.appId === result.appId
+        ? { ...previous, fileCount: result.files.length, totalBytes: size } : previous);
       const names = new Set(result.files.map(file => file.name));
       setSelection(existing => new Set([...existing].filter(name => names.has(name))));
     }).catch(error => {
@@ -181,9 +186,11 @@ export default function App() {
   const allOnPage = pageFiles.length > 0 && pageFiles.every(file => selection.has(file.name));
   const someOnPage = pageFiles.some(file => selection.has(file.name));
   useEffect(() => { if (pageCheckbox.current) pageCheckbox.current.indeterminate = someOnPage && !allOnPage; }, [someOnPage, allOnPage]);
-  const totalBytes = games.reduce((sum, game) => sum + game.totalBytes, 0);
-  const totalFiles = games.reduce((sum, game) => sum + game.fileCount, 0);
-  const currentBytes = listing?.files.reduce((sum, file) => sum + file.size, 0) ?? activeGame?.totalBytes ?? 0;
+  const checkedGames = games.filter(game => game.fileCount !== null && game.totalBytes !== null);
+  const partialInventory = checkedGames.length < games.length;
+  const totalBytes = checkedGames.reduce((sum, game) => sum + game.totalBytes!, 0);
+  const totalFiles = checkedGames.reduce((sum, game) => sum + game.fileCount!, 0);
+  const currentBytes = listing?.files.reduce((sum, file) => sum + file.size, 0) ?? activeGame?.totalBytes ?? null;
   const visibleGames = games.filter(game => `${game.name} ${game.appId}`.toLocaleLowerCase().includes(gameQuery.toLocaleLowerCase()));
 
   const startLogin = async () => {
@@ -257,11 +264,11 @@ export default function App() {
     {sidebarOpen && <button className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} aria-label="Закрыть меню игр" />}
     <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`} aria-label="Игры Steam Cloud">
       <div className="sidebar-brand"><Brand light /><button className="icon-button mobile-close" onClick={() => setSidebarOpen(false)} aria-label="Закрыть меню"><X size={19} /></button></div>
-      <div className="sidebar-section-label">БИБЛИОТЕКА <span>{games.length}</span></div>
+      <div className="sidebar-section-label">{partialInventory ? 'ИГРЫ STEAM' : 'ИГРЫ С CLOUD'} <span>{games.length}</span></div>
       <label className="game-search"><Search size={16} /><input aria-label="Поиск игры" placeholder="Найти игру…" value={gameQuery} onChange={event => setGameQuery(event.target.value)} /></label>
       <nav className="game-list" aria-label="Выберите игру">
         {gamesLoading && !games.length ? Array.from({ length: 4 }, (_, index) => <div className="game-skeleton skeleton" key={index} />) : visibleGames.map(game => <button className={`game-button ${selectedId === game.appId ? 'active' : ''}`} key={game.appId} onClick={() => selectGame(game.appId)} disabled={!!action} aria-current={selectedId === game.appId ? 'page' : undefined}>
-          <span className={`game-icon ${gameColor(game.appId)}`}><Gamepad2 size={20} /></span><span className="game-name"><strong>{game.name}</strong><small>{bytes(game.totalBytes)} <span>· {integer(game.fileCount)} файлов</span></small></span>{selectedId === game.appId && <span className="active-dot" />}
+          <span className={`game-icon ${gameColor(game.appId)}`}><Gamepad2 size={20} /></span><span className="game-name"><strong>{game.name}</strong><small>{game.totalBytes === null ? 'Cloud не проверено' : bytes(game.totalBytes)} {game.fileCount !== null && <span>· {integer(game.fileCount)} файлов</span>}</small></span>{selectedId === game.appId && <span className="active-dot" />}
         </button>)}
         {!gamesLoading && !visibleGames.length && <p className="sidebar-empty">{gameQuery ? 'Игры не найдены' : 'Игр с облачными файлами пока нет'}</p>}
         {manualGame && !games.some(game => game.appId === manualGame.appId) && <button className={`game-button ${selectedId === manualGame.appId ? 'active' : ''}`} onClick={() => selectGame(manualGame.appId)}><span className="game-icon blue"><Gamepad2 size={20} /></span><span className="game-name"><strong>{manualGame.name}</strong><small>Добавлено по AppID</small></span></button>}
@@ -270,9 +277,9 @@ export default function App() {
       <form className="add-game" onSubmit={event => {
         event.preventDefault(); const id = Number(manualInput);
         if (!Number.isInteger(id) || id < 1 || id > 4294967295) return;
-        setManualGame({ appId: id, name: `Steam App ${id}`, fileCount: 0, totalBytes: 0 }); selectGame(id); setManualInput('');
+        setManualGame({ appId: id, name: `Steam App ${id}`, fileCount: null, totalBytes: null }); selectGame(id); setManualInput('');
       }}><label htmlFor="app-id">Открыть игру по AppID</label><div><input id="app-id" aria-label="AppID игры" placeholder="Например, 949230" inputMode="numeric" pattern="[0-9]+" value={manualInput} onChange={event => setManualInput(event.target.value)} disabled={!!action} /><button aria-label="Открыть игру по AppID" disabled={!manualInput || !!action}><Plus size={17} /></button></div></form>
-      <div className="sidebar-bottom"><div className="storage-mini"><Cloud size={19} /><div><strong>{bytes(totalBytes)}</strong><span>в облаке Steam</span></div></div><p>Объём файлов в обнаруженных играх.<br />Лимит хранилища задаётся для каждой игры.</p></div>
+      <div className="sidebar-bottom"><div className="storage-mini"><Cloud size={19} /><div><strong>{checkedGames.length ? bytes(totalBytes) : '—'}</strong><span>{partialInventory ? `Проверено ${checkedGames.length} из ${games.length} игр` : 'в облаке Steam'}</span></div></div><p>{partialInventory ? 'Steam не предоставил общий перечень Cloud-файлов.' : 'Объём файлов в обнаруженных играх.'}<br />Лимит хранилища задаётся для каждой игры.</p></div>
     </aside>
 
     <div className="workspace">
@@ -281,16 +288,17 @@ export default function App() {
       <main className="main-content" id="main-content">
         {session.mode === 'demo' && <div className="demo-banner"><Info size={17} /><span><strong>Демонстрационный режим.</strong> Все файлы вымышленные. Действия не меняют Steam Cloud.</span></div>}
         <div className="page-heading"><div><div className="eyebrow dark-eyebrow">ВАШЕ ОБЛАКО, БЕЗ ЛИШНЕГО</div><h1>Мои сохранения</h1><p>Найдите нужное. Сохраните важное. Освободите место.</p></div><button className="button button-secondary refresh-button" onClick={() => { void loadGames(); setRefresh(value => value + 1); }} disabled={gamesLoading || filesLoading || !!action}><RefreshCw size={16} className={gamesLoading || filesLoading ? 'spin' : ''} /> Обновить</button></div>
+        {partialInventory && <div className="notice notice-info" role="status"><Info size={19} /><div>Steam не предоставил общий список облачных игр. Показаны игры из библиотеки; не у всех есть Cloud-сохранения. Размеры и количество файлов определятся после открытия каждой игры.</div></div>}
         <section className="stats-grid" aria-label="Обзор облачного хранилища">
-          <div className="stat-card"><span className="stat-icon blue"><HardDrive size={22} /></span><div><span className="stat-label">Всего в облаке</span><strong>{gamesLoading && !games.length ? '…' : bytes(totalBytes)}</strong><small>В обнаруженных играх</small></div><span className="stat-decoration" aria-hidden="true" /></div>
-          <div className="stat-card"><span className="stat-icon violet"><File size={22} /></span><div><span className="stat-label">Облачные файлы</span><strong>{gamesLoading && !games.length ? '…' : integer(totalFiles)}</strong><small>Сохранения и настройки</small></div></div>
-          <div className="stat-card"><span className="stat-icon green"><Gamepad2 size={23} /></span><div><span className="stat-label">Игры с сохранениями</span><strong>{gamesLoading && !games.length ? '…' : integer(games.length)}</strong><small>В вашем аккаунте Steam</small></div></div>
+          <div className="stat-card"><span className="stat-icon blue"><HardDrive size={22} /></span><div><span className="stat-label">Всего в облаке</span><strong>{gamesLoading && !games.length ? '…' : checkedGames.length ? bytes(totalBytes) : partialInventory ? '—' : bytes(totalBytes)}</strong><small>{partialInventory ? `Проверено ${checkedGames.length} из ${games.length} игр` : 'В обнаруженных играх'}</small></div><span className="stat-decoration" aria-hidden="true" /></div>
+          <div className="stat-card"><span className="stat-icon violet"><File size={22} /></span><div><span className="stat-label">Облачные файлы</span><strong>{gamesLoading && !games.length ? '…' : checkedGames.length ? integer(totalFiles) : partialInventory ? '—' : integer(totalFiles)}</strong><small>{partialInventory ? 'Только проверенные игры' : 'Сохранения и настройки'}</small></div></div>
+          <div className="stat-card"><span className="stat-icon green"><Gamepad2 size={23} /></span><div><span className="stat-label">{partialInventory ? 'Игры в библиотеке' : 'Игры с сохранениями'}</span><strong>{gamesLoading && !games.length ? '…' : integer(games.length)}</strong><small>В вашем аккаунте Steam</small></div></div>
         </section>
 
         {notice && <div className={`notice notice-${notice.kind}`} role={notice.kind === 'error' ? 'alert' : 'status'}><span>{notice.kind === 'success' ? <CheckCircle2 size={20} /> : notice.kind === 'error' ? <AlertCircle size={20} /> : <Info size={20} />}</span><div>{notice.message}{!!notice.details?.length && <details><summary>Подробности ({notice.details.length})</summary><ul>{notice.details.map((detail, i) => <li key={i}>{detail}</li>)}</ul></details>}</div><button className="icon-button" onClick={() => setNotice(null)} aria-label="Закрыть уведомление"><X size={17} /></button></div>}
 
         <section className="files-panel" aria-labelledby="game-heading">
-          <div className="game-heading"><div className={`game-cover ${gameColor(selectedId || 0)}`}><Gamepad2 size={32} strokeWidth={1.5} /></div><div className="game-title"><div className="section-kicker">ОБЛАЧНЫЕ СОХРАНЕНИЯ</div><h2 id="game-heading">{activeGame?.name || (gamesLoading ? 'Загружаем библиотеку…' : 'Выберите игру')}</h2>{selectedId && <div className="game-meta"><span>AppID {selectedId}</span><span>·</span><span>{listing ? integer(listing.files.length) : '—'} файлов</span><span>·</span><span>{bytes(currentBytes)}</span></div>}</div>{selectedId && <a className="steam-link" href={`https://store.steampowered.com/app/${selectedId}/`} target="_blank" rel="noreferrer" title="Открыть игру в Steam" aria-label="Открыть игру в Steam"><ExternalLink size={17} /></a>}</div>
+          <div className="game-heading"><div className={`game-cover ${gameColor(selectedId || 0)}`}><Gamepad2 size={32} strokeWidth={1.5} /></div><div className="game-title"><div className="section-kicker">ОБЛАЧНЫЕ СОХРАНЕНИЯ</div><h2 id="game-heading">{activeGame?.name || (gamesLoading ? 'Загружаем библиотеку…' : 'Выберите игру')}</h2>{selectedId && <div className="game-meta"><span>AppID {selectedId}</span><span>·</span><span>{listing ? integer(listing.files.length) : '—'} файлов</span><span>·</span><span>{currentBytes === null ? '—' : bytes(currentBytes)}</span></div>}</div>{selectedId && <a className="steam-link" href={`https://store.steampowered.com/app/${selectedId}/`} target="_blank" rel="noreferrer" title="Открыть игру в Steam" aria-label="Открыть игру в Steam"><ExternalLink size={17} /></a>}</div>
 
           <div className="file-toolbar"><label className="file-search"><Search size={18} /><input aria-label="Поиск сохранений" placeholder="Поиск по названию или пути файла" value={query} onChange={event => { setQuery(event.target.value); setPage(0); }} disabled={!listing} />{query && <button onClick={() => { setQuery(''); setPage(0); }} aria-label="Очистить поиск"><X size={15} /></button>}</label><label className="sort-select"><span>Порядок</span><select aria-label="Сортировка файлов" value={`${sort.key}:${sort.direction}`} onChange={event => { const [key, direction] = event.target.value.split(':') as [Sort['key'], Sort['direction']]; setSort({ key, direction }); setPage(0); }}><option value="size:desc">Сначала большие</option><option value="size:asc">Сначала маленькие</option><option value="modifiedAt:desc">Сначала новые</option><option value="modifiedAt:asc">Сначала старые</option><option value="name:asc">По имени А → Я</option></select></label></div>
           {listing && listing.files.length > 0 && <div className="selection-toolbar"><span>{query ? `Найдено: ${integer(sortedFiles.length)}` : `${integer(listing.files.length)} файлов`}<span className="selection-count">{selection.size ? ` · Выбрано: ${selection.size}` : ''}</span></span><div><button className="text-button" onClick={() => setSelection(new Set(sortedFiles.slice(0, BATCH_LIMIT).map(file => file.name)))} disabled={!sortedFiles.length || !!action}>{sortedFiles.length > BATCH_LIMIT ? `Выбрать первые ${BATCH_LIMIT}` : 'Выбрать все найденные'}</button>{selection.size > 0 && <button className="text-button muted" onClick={() => setSelection(new Set())} disabled={!!action}>Снять выбор</button>}</div></div>}
