@@ -99,3 +99,42 @@ test('unexpected transport exceptions are redacted', async () => {
     return true;
   });
 });
+
+test('owned-game fallback uses the Player service and never Cloud namespace', async () => {
+  const client: SteamWireClient = {
+    steamID,
+    _send(header, body, callback) {
+      assert.equal(header.proto.target_job_name, 'Player.GetOwnedGames#1');
+      const request = schema.CPlayer_GetOwnedGames_Request.decode(body);
+      assert.equal(request.steamid?.toString(), steamID.getSteamID64());
+      assert.equal(request.include_appinfo, true);
+      const response = schema.CPlayer_GetOwnedGames_Response.fromObject({
+        game_count: 1, games: [{ appid: 949230, name: 'Cities: Skylines II' }],
+      });
+      callback(Buffer.from(schema.CPlayer_GetOwnedGames_Response.encode(response).finish()), { proto: { eresult: 1 } });
+    },
+  };
+  const rpc = new SteamRpcTransport(client, new AbortController().signal);
+  const response = await rpc.call<{ games: { appid: number; name: string }[] }>('GetOwnedGames', {
+    steamid: steamID.getSteamID64(), include_appinfo: true,
+  });
+  assert.deepEqual(response.games.map(game => game.name), ['Cities: Skylines II']);
+});
+
+test('Steam generic failure names the read method without claiming a delete happened', async () => {
+  const client: SteamWireClient = {
+    steamID,
+    _send(_header, _body, callback) {
+      callback(Buffer.alloc(0), { proto: { eresult: 2 } });
+    },
+  };
+  const rpc = new SteamRpcTransport(client, new AbortController().signal);
+  await assert.rejects(rpc.call('EnumerateUserApps', {}), (error: unknown) => {
+    assert.ok(error instanceof SteamServiceError);
+    assert.equal(error.code, 'STEAM_RESULT_2');
+    assert.equal(error.method, 'EnumerateUserApps');
+    assert.match(error.message, /Cloud\.EnumerateUserApps/);
+    assert.doesNotMatch(error.message, /подтвердил выполнение операции/);
+    return true;
+  });
+});
