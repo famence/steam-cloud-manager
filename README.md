@@ -49,3 +49,7 @@ The local developer server uses the existing Fastify implementation, while Verce
 See [docs/vercel-only-architecture.md](docs/vercel-only-architecture.md) and [SECURITY.md](SECURITY.md).
 
 made by [@famence](https://github.com/famence)
+
+### Automatic encryption-key setup
+
+After signing into the Vercel CLI and linking the desired project, run `npm run setup:vercel-key -- preview`. This command checks for an existing `SCM_SESSION_KEY` and generates it only if absent. It passes the key through stdin directly to the Vercel CLI with Sensitive/Secret protection, without printing or saving its value. Use `npm run setup:vercel-key -- production` to set up an independent production key. Existing keys are never overwritten. Redeploy the corresponding environment after creation.

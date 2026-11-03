@@ -35,3 +35,7 @@ Open-source веб-сервис для просмотра, скачивания 
 Подробная архитектура — [docs/vercel-only-architecture.md](docs/vercel-only-architecture.md), модель угроз — [SECURITY.md](SECURITY.md).
 
 made by [@famence](https://github.com/famence)
+
+### Автоматическая настройка ключа
+
+После входа в Vercel CLI и привязки каталога к нужному проекту выполните `npm run setup:vercel-key -- preview`. Команда проверяет существующие переменные, генерирует `SCM_SESSION_KEY` только при его отсутствии и передаёт значение в Vercel как Sensitive/Secret **через stdin**, без записи в файлы или логи. Для production используется `npm run setup:vercel-key -- production` с отдельным ключом. Существующие секреты не заменяются. После создания нужен новый deployment соответствующего окружения.
