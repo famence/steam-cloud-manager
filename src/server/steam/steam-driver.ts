@@ -60,6 +60,7 @@ export class SteamCloudDriver implements CloudDriver {
   private epoch = 0;
   private closed = false;
   private deleting = false;
+  private usePicsGameList = false;
 
   constructor(options: SteamCloudDriverOptions = {}) {
     this.allowed = new Set(options.allowedSteamIds ?? []);
@@ -202,6 +203,11 @@ export class SteamCloudDriver implements CloudDriver {
 
   async listGames(): Promise<CloudGame[]> {
     const rpc = this.requireRpc();
+    if (this.usePicsGameList) {
+      const client = this.client;
+      if (!client) throw new SteamServiceError('Сессия Steam завершена.', 'NOT_CONNECTED', 401);
+      return listPicsOwnedGames(client, this.lifetime.signal);
+    }
     const steamId = this.client?.steamID?.getSteamID64() ?? '';
     let games: CloudGame[];
     try {
@@ -213,6 +219,7 @@ export class SteamCloudDriver implements CloudDriver {
       if (!(error instanceof SteamServiceError) || error.code !== 'GAME_LIST_UNAVAILABLE') throw error;
       const client = this.client;
       if (!client) throw new SteamServiceError('Сессия Steam завершена.', 'NOT_CONNECTED', 401);
+      this.usePicsGameList = true;
       return listPicsOwnedGames(client, this.lifetime.signal);
     }
 
@@ -297,6 +304,7 @@ export class SteamCloudDriver implements CloudDriver {
 
   private release(): void {
     this.epoch++;
+    this.usePicsGameList = false;
     clearTimeout(this.timer);
     this.timer = undefined;
     this.lifetime.abort();
