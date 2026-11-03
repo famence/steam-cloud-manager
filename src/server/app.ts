@@ -221,6 +221,12 @@ export async function buildApp(options: {
     const listing = await session.driver.listFiles(appId);
     assertActive(session);
     const files = selectFiles(listing, names, revision);
+    // Validate the first Steam download before handing a link to the browser.
+    // Otherwise an unsupported storage URL or Steam RPC failure shows as a
+    // silent failed navigation instead of an API error in the application.
+    const initial = await session.driver.downloadFile(appId, files[0]);
+    initial.stream.destroy();
+    assertActive(session);
     const ticket = randomId();
     if (session.exports.size >= 5) session.exports.clear();
     session.exports.set(ticket, { appId, files, revision, expiresAt: now() + 5 * 60_000 });
