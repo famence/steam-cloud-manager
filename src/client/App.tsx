@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, Cloud, Download, File, Gamepad2, LoaderCircle, RefreshCw, Search, Star, Trash2, X } from 'lucide-react';
 import type { CloudFile, CloudGame, DeletePlan, DeleteResult, FileListing, GameSummary, SessionInfo } from '../shared/types';
-import { api, ApiError, checkedDownloadUrl, chooseSaveDestination, isCancelledSave, startDownload, streamToSavedFile } from './api';
+import { api, ApiError, checkedDownloadUrl, chooseSaveDestination, isCancelledSave, startDownload, streamToSavedFile, loginViaQr, saveStreamedPost, submitZipForm } from './api';
 import { basename } from './format';
 import { parseAppId } from './library';
 import { countFiles, errorText, formatBytes, type Messages } from './i18n';
@@ -65,6 +65,7 @@ export default function App() {
   const { favorites, toggleFavorite } = useFavorites(account);
   const accountRef = useRef(account); accountRef.current = account;
   const sessionRequest = useRef<Promise<void> | null>(null);
+  const streamingLogin = useRef(false);
   const libraryRequest = useRef(0);
   const attempted = useRef(new Set<number>());
   const checkBox = useRef<HTMLInputElement>(null);
@@ -84,7 +85,7 @@ export default function App() {
   }, []);
   useEffect(() => { void readSession(); }, [readSession]);
   useEffect(() => {
-    if (!session || !['awaiting_confirmation', 'connecting'].includes(session.login.status)) return;
+    if (streamingLogin.current || !session || !['awaiting_confirmation', 'connecting'].includes(session.login.status)) return;
     let current = true; let timer: ReturnType<typeof setTimeout>; const controller = new AbortController();
     const poll = async () => {
       try { const value = await api<SessionInfo>('/api/session', { signal: controller.signal }); if (current) { setSession(value); setSessionError(null); } }
@@ -163,24 +164,65 @@ export default function App() {
     const candidates = visibleGames.slice(0, gameLimit).filter(game => game.fileCount === null
       && game.cloudSupport !== 'unsupported' && !attempted.current.has(game.appId));
     if (!candidates.length) return;
-    let cursor = 0; let current = true; const controller = new AbortController();
-    const worker = async () => {
-      while (current && cursor < candidates.length) {
-        const id = candidates[cursor++].appId; attempted.current.add(id);
-        setChecking(previous => new Set(previous).add(id));
-        try {
-          const result = await api<GameSummary>(`/api/games/${id}/summary`, { signal: controller.signal });
-          if (current) setGames(previous => previous.map(game => game.appId === id ? { ...game, ...result,
-            cloudSupport: result.fileCount > 0 ? 'supported' : game.cloudSupport } : game));
-        } catch (error) {
-          if (current) setCheckFailed(previous => new Set(previous).add(id));
-          else attempted.current.delete(id);
-          if (error instanceof ApiError && error.status === 401) { if (current) void readSession(); break; }
-        } finally { if (current) setChecking(previous => { const next = new Set(previous); next.delete(id); return next; }); }
+    let current = true; const controller = new AbortController();
+    if (location.pathname.startsWith('/app/')) {
+      const ids=candidates.map(game=>game.appId);
+      for(const id of ids) attempted.current.add(id);
+      setChecking(previous=>new Set([...previous,...ids]));
+      const groups: number[][]=[];
+      for(let i=0;i<ids.length;i+=8)groups.push(ids.slice(i,i+8));
+      const run=async()=>{
+        // Only one backend session at a time: avoid repeated concurrent Steam logins.
+        for(const group of groups){
+          if(!current)break;
+          try {
+            const response=await api<{summaries:Array<GameSummary & {error?:string}>}>('/api/games/summaries',{
+              csrf:session?.csrfToken,body:{ids:group},signal:controller.signal,
+            });
+            if(!current)break;
+            const updates=new Map(response.summaries.map(item=>[item.appId,item]));
+            setGames(previous=>previous.map(game=>{
+              const summary=updates.get(game.appId);
+              if(!summary||summary.error||summary.fileCount===undefined)return game;
+              return {...game,...summary,cloudSupport:summary.fileCount>0?'supported':game.cloudSupport};
+            }));
+            setCheckFailed(previous=>{
+              const next=new Set(previous);
+              for(const id of group)if(updates.get(id)?.error)next.add(id);
+              return next;
+            });
+          }catch(error){
+            if(current)setCheckFailed(previous=>new Set([...previous,...group]));
+            if(error instanceof ApiError && error.status===401){if(current)void readSession();break;}
+          }finally{
+            if(current)setChecking(previous=>{
+              const next=new Set(previous);for(const id of group)next.delete(id);return next;
+            });
+          }
+        }
+      };
+      void run();
+      return ()=>{current=false;controller.abort();setChecking(new Set());};
+    }
+    let cursor=0;
+    const worker=async()=>{
+      while(current && cursor<candidates.length){
+        const id=candidates[cursor++].appId;attempted.current.add(id);
+        setChecking(previous=>new Set(previous).add(id));
+        try{
+          const result=await api<GameSummary>('/api/games/'+id+'/summary',{signal:controller.signal});
+          if(current)setGames(previous=>previous.map(game=>game.appId===id?{...game,...result,
+            cloudSupport:result.fileCount>0?'supported':game.cloudSupport}:game));
+        }catch(error){
+          if(current)setCheckFailed(previous=>new Set(previous).add(id));
+          if(error instanceof ApiError&&error.status===401){if(current)void readSession();break;}
+        }finally{
+          if(current)setChecking(previous=>{const next=new Set(previous);next.delete(id);return next;});
+        }
       }
     };
-    void worker(); void worker();
-    return () => { current = false; controller.abort(); setChecking(new Set()); };
+    void worker();void worker();
+    return ()=>{current=false;controller.abort();setChecking(new Set());};
     // Deliberate snapshot dependencies; games/visibleGames change as the batch returns.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, account, gamesVersion, gameLimit, gameQuery, selectedId, readSession]);
@@ -213,9 +255,22 @@ export default function App() {
   const toggleFile = (name: string) => { const next = new Set(selection); if (next.has(name)) next.delete(name); else if (next.size < FILE_LIMIT) next.add(name); changeSelection(next); };
   const togglePage = () => { const next = new Set(selection); for (const file of pageFiles) { if (allOnPage) next.delete(file.name); else if (next.size < FILE_LIMIT) next.add(file.name); } changeSelection(next); };
   const startLogin = async () => {
-    if (!session) return; setSessionLoading(true); setSessionError(null);
-    try { setSession(await api<SessionInfo>('/api/auth/steam', { body: {}, csrf: session.csrfToken })); }
-    catch (error) { setSessionError(error); } finally { setSessionLoading(false); }
+    if (!session || streamingLogin.current) return;
+    streamingLogin.current = true; setSessionLoading(true); setSessionError(null);
+    try {
+      if (session.mode === 'demo') {
+        setSession(await api<SessionInfo>('/api/auth/steam', {body:{},csrf:session.csrfToken}));
+      } else {
+        setSession(await loginViaQr(session.csrfToken, challenge => {
+          setSession(previous => previous ? {...previous,
+            login:{status:'awaiting_confirmation',...challenge}} : previous);
+          setSessionLoading(false);
+        }));
+      }
+    } catch(error) {
+      setSessionError(error);
+      setSession(previous => previous ? {...previous,login:{status:'disconnected'}} : previous);
+    } finally { streamingLogin.current = false; setSessionLoading(false); }
   };
   const logout = async () => {
     if (!session || action) return; libraryRequest.current++; setSessionLoading(true);
@@ -225,17 +280,32 @@ export default function App() {
   };
   const exportFiles = async (files = selectedFiles) => {
     if (!session || !listing || !files.length || action) return;
-    setAction('export'); setNotice(null); setPreparedExport(null);
-    try {
-      const picker = chooseSaveDestination(`steam-cloud-${listing.appId}.zip`);
-      const handle = picker ? await picker : null;
-      const result = await api<{ downloadUrl: string }>(`/api/games/${listing.appId}/exports`, {
-        body: { names: files.map(file => file.name), revision: listing.revision }, csrf: session.csrfToken });
-      const url = checkedDownloadUrl(result.downloadUrl);
-      if (handle) { await streamToSavedFile(url, handle); setNotice({ kind: 'success', key: 'backupDone' }); }
-      else { setPreparedExport(url); setNotice({ kind: 'info', key: 'backupReady' }); }
-    } catch (error) { if (!isCancelledSave(error)) handleError(error); }
-    finally { setAction(null); }
+    const route = '/api/games/' + listing.appId + '/exports';
+    const payload = {names:files.map(file=>file.name),revision:listing.revision};
+    // Must open native picker or submit the form while user activation exists.
+    const picker=chooseSaveDestination('steam-cloud-'+listing.appId+'.zip');
+    if(session.mode==='demo' && !location.pathname.startsWith('/app/')){
+      setAction('export');setNotice(null);setPreparedExport(null);
+      try {
+        const ticket=await api<{downloadUrl:string}>(route,{csrf:session.csrfToken,body:payload});
+        const link=checkedDownloadUrl(ticket.downloadUrl);
+        if(picker){await streamToSavedFile(link,await picker);setNotice({kind:'success',key:'backupDone'});}
+        else{setPreparedExport(link);setNotice({kind:'info',key:'backupReady'});}
+      } catch(error){if(!isCancelledSave(error))handleError(error);}
+      finally{setAction(null);}
+      return;
+    }
+    if(!picker){
+      try {submitZipForm(route,payload,session.csrfToken);setNotice({kind:'info',key:'backupNotice'});}
+      catch(error){handleError(error);}
+      return;
+    }
+    setAction('export');setNotice(null);
+    try{
+      await saveStreamedPost(route,payload,session.csrfToken,await picker);
+      setNotice({kind:'success',key:'backupDone'});
+    }catch(error){if(!isCancelledSave(error))handleError(error);}
+    finally{setAction(null);}
   };
   const downloadSingle = async (file: CloudFile) => {
     if (!listing || action) return;
@@ -258,7 +328,7 @@ export default function App() {
   const deleteFiles = async (confirmation: string) => {
     if (!session || !plan || action) return; setAction('delete');
     try {
-      const result = await api<DeleteResult>(`/api/games/${plan.appId}/delete`, { body: { planId: plan.planId, confirmation, gamesClosed: true }, csrf: session.csrfToken });
+      const result = await api<DeleteResult>(`/api/games/${plan.appId}/delete`, { body: { planId: plan.planId, confirmation, gamesClosed: true, ...(location.pathname.startsWith('/app/') ? {names:plan.files.map(file=>file.name)} : {}) }, csrf: session.csrfToken });
       setPlan(null); changeSelection(new Set());
       setNotice(result.failed.length || !result.batchCompleted ? { kind: 'error', key: 'deletePartial', files: result.failed.map(file => file.name) }
         : { kind: 'success', key: 'deleteDone', extra: String(result.deleted.length) });

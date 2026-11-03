@@ -6,6 +6,6 @@ export default defineConfig({
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1200, height: 850 } } }],
   webServer: [
     { command: 'npm start', cwd: process.cwd(), url: 'http://127.0.0.1:3110/api/health', env: { PORT: '3110', DEMO_MODE: 'true' }, reuseExistingServer: false },
-    { command: 'node scripts/preview-public.mjs', cwd: process.cwd(), url: 'http://127.0.0.1:3111/en/', reuseExistingServer: false },
+    { command: 'node --import tsx scripts/preview-public.mjs', cwd: process.cwd(), url: 'http://127.0.0.1:3111/en/', env: { SCM_SESSION_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', DEMO_MODE: 'true', VERCEL_ENV: 'preview' }, reuseExistingServer: false },
   ],
 });

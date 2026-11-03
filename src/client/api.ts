@@ -86,3 +86,97 @@ export async function streamToSavedFile(url: string, handle: SaveFileHandle): Pr
     throw new ApiError(502, 'Download interrupted; incomplete file was not saved', 'DOWNLOAD_INTERRUPTED');
   }
 }
+
+/** The streaming QR request remains inside one Vercel Function invocation. */
+export async function loginViaQr(
+  csrf: string,
+  onChallenge: (qr: {qrDataUrl:string;expiresAt:number}) => void,
+): Promise<import('../shared/types').SessionInfo> {
+  const response = await fetch('/api/auth/steam', {
+    method: 'POST', credentials: 'same-origin',
+    headers: {'X-CSRF-Token': csrf, Accept: 'text/event-stream'},
+  });
+  if (!response.ok || !response.body) {
+    throw new ApiError(response.status, 'Steam Guard connection failed', 'STEAM_AUTH_ERROR');
+  }
+  const reader = response.body.getReader();
+  let pending = '';
+  const decoder = new TextDecoder();
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) throw new ApiError(401, 'Steam login was not completed', 'STEAM_AUTH_ERROR');
+      pending += decoder.decode(next.value, {stream:true});
+      if (pending.length > 32768) throw new ApiError(502, 'Invalid Steam QR response', 'STEAM_AUTH_ERROR');
+      let index: number;
+      while ((index = pending.indexOf('\n\n')) >= 0) {
+        const item = pending.slice(0,index);
+        pending = pending.slice(index+2);
+        const type = /^event: ([a-z]+)$/m.exec(item)?.[1];
+        const text = /^data: (.+)$/m.exec(item)?.[1];
+        if (!type || !text) continue;
+        const data: unknown = JSON.parse(text);
+        if (!data || typeof data !== 'object') throw new ApiError(502, 'Invalid Steam QR response', 'STEAM_AUTH_ERROR');
+        const obj = data as Record<string,unknown>;
+        if (type === 'qr') {
+          if (typeof obj.qrDataUrl !== 'string' || !obj.qrDataUrl.startsWith('data:image/png;base64,') ||
+            typeof obj.expiresAt !== 'number') throw new ApiError(502,'Invalid QR image','STEAM_AUTH_ERROR');
+          onChallenge({qrDataUrl:obj.qrDataUrl,expiresAt:obj.expiresAt});
+        } else if (type === 'authenticated') {
+          if (typeof obj.ticket !== 'string') throw new ApiError(502,'Invalid Steam ticket','STEAM_AUTH_ERROR');
+          return await api<import('../shared/types').SessionInfo>('/api/auth/exchange', {
+            csrf, body: {ticket:obj.ticket},
+          });
+        } else if (type === 'expired' || type === 'error') {
+          throw new ApiError(401,'Steam Guard QR was not confirmed','STEAM_AUTH_ERROR');
+        }
+      }
+    }
+  } finally { await reader.cancel().catch(()=>{}); }
+}
+
+/** In supported browsers save a POST streaming ZIP directly to the disk. */
+export async function saveStreamedPost(
+  url: string,
+  payload: {names:string[];revision:string},
+  csrf: string,
+  handle: SaveFileHandle,
+): Promise<void> {
+  const response=await fetch(checkedDownloadUrl(url),{
+    method:'POST',credentials:'same-origin',
+    headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},
+    body:JSON.stringify(payload),
+  });
+  if(!response.ok){
+    const data=await response.json().catch(()=>null);
+    throw new ApiError(response.status,data?.error?.message||'ZIP download failed',
+      data?.error?.code||'DOWNLOAD_REJECTED');
+  }
+  if(!response.body)throw new ApiError(502,'Stream unavailable','DOWNLOAD_STREAM_UNAVAILABLE');
+  const writable=await handle.createWritable();
+  try{await response.body.pipeTo(writable);}
+  catch{
+    await writable.abort().catch(()=>{});
+    throw new ApiError(502,'Download interrupted; incomplete ZIP discarded','DOWNLOAD_INTERRUPTED');
+  }
+}
+
+/** Native browser submission avoids buffering a multi-GB ZIP in JavaScript. */
+export function submitZipForm(
+  url:string,payload:{names:string[];revision:string},csrf:string,
+):void {
+  const form=document.createElement('form');
+  form.method='POST';
+  form.action=checkedDownloadUrl(url);
+  form.style.display='none';
+  const input=(name:string,value:string)=>{
+    const node=document.createElement('input');
+    node.type='hidden';node.name=name;node.value=value;form.appendChild(node);
+  };
+  input('names',JSON.stringify(payload.names));
+  input('revision',payload.revision);
+  input('csrf',csrf);
+  document.body.appendChild(form);
+  form.submit();
+  form.remove();
+}

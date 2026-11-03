@@ -14,15 +14,22 @@ for (const locale of ['en', 'ru']) {
   assert(html.includes('name="description"') && html.includes('schema.org/SoftwareApplication'));
   assert(!html.includes('<!--APP-->'), 'Prerender placeholder was not replaced');
 }
-for (const file of output.filter(file => file.endsWith('.js'))) {
-  const js = await readFile(file, 'utf8');
-  for (const privatePath of ['/api/auth/steam', '/api/session', '/api/games/', 'ClientFileDownload', 'steam-session', 'steam-user']) {
-    assert(!js.includes(privatePath), `Public bundle contains local backend code: ${privatePath}`);
-  }
+const privatePage=await readFile('dist/public/app/index.html','utf8');
+assert(privatePage.includes('noindex,nofollow'));
+const landingBundle=output.filter(file=>/\/assets\/landing-[\w-]+\.js$/.test(file));
+assert.equal(landingBundle.length,1);
+const js=await readFile(landingBundle[0],'utf8');
+for(const name of ['/api/auth/steam','steam-user','ClientFileDownload']) {
+  assert(!js.includes(name),'SEO landing must not load the account API');
 }
-const config = JSON.parse(await readFile('vercel.json', 'utf8'));
-assert.equal(config.outputDirectory, 'dist/public');
-assert(!config.rewrites && !config.functions, 'The public site must not proxy account traffic');
-const csp = config.headers.flatMap(x => x.headers).find(x => x.key === 'Content-Security-Policy')?.value ?? '';
-assert(csp.includes("connect-src 'none'") && csp.includes("frame-ancestors 'none'"));
-console.log('Public-site contract passed: prerendered en/ru, no hosted Steam session or proxy.');
+const {config}=await import('../vercel.ts');
+assert.equal(config.outputDirectory,'dist/public');
+assert(config.rewrites.some(r=>r.source==='/api/:path*'&&r.destination.startsWith('/api/index')));
+assert(config.functions['api/index.ts'].maxDuration>=120);
+const appCsp=config.headers.find(x=>x.source==='/app/(.*)')
+  ?.headers.find(x=>x.key==='Content-Security-Policy')?.value||'';
+assert(appCsp.includes("connect-src 'self'") && appCsp.includes("frame-ancestors 'none'"));
+const landingCsp=config.headers.find(x=>x.source==='/en/(.*)')
+  ?.headers.find(x=>x.key==='Content-Security-Policy')?.value||'';
+assert(landingCsp.includes("connect-src 'none'"));
+console.log('Vercel-only build verified: landing SEO, /app/, same-origin /api/ Node Functions.');

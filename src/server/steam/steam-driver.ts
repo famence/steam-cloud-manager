@@ -202,6 +202,54 @@ export class SteamCloudDriver implements CloudDriver {
     }
   }
 
+  /**
+   * Stateless Vercel request: connect a fresh Steam client using the encrypted
+   * HttpOnly-cookie refresh token. No Steam state survives the invocation.
+   */
+  async resumeWithToken(steamId: string, refreshToken: string): Promise<void> {
+    if (this.closed || !/^7656119\d{10}$/.test(steamId) || !refreshToken || refreshToken.length > 8192) {
+      throw new SteamServiceError('Steam session is invalid.', 'NOT_CONNECTED', 401);
+    }
+    this.release();
+    const epoch = this.epoch;
+    this.lifetime = new AbortController();
+    const tokenSession = {
+      steamID: { getSteamID64: () => steamId },
+      refreshToken, accessToken: '', cancelLoginAttempt: () => {},
+    } as unknown as LoginSession;
+    // connectClient consumes and clears tokenSession in a finally block.
+    // Its SteamUser emits loggedOn asynchronously after client.logOn.
+    void this.connectClient(tokenSession, epoch);
+    const started = this.client;
+    if (!started) throw new SteamServiceError('Steam client unavailable.', 'STEAM_UNAVAILABLE', 502);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        let done = false;
+        const finish = (error?: Error) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timeout);
+          started.removeListener('loggedOn', connected);
+          started.removeListener('error', failed);
+          started.removeListener('disconnected', failed);
+          if (error) reject(error); else resolve();
+        };
+        const failed = () => finish(new SteamServiceError('Steam disconnected.', 'STEAM_UNAVAILABLE', 502));
+        const connected = () => this.info.status === 'connected'
+          ? finish() : failed();
+        const timeout = setTimeout(() => finish(new SteamServiceError('Steam connection timed out.', 'STEAM_TIMEOUT', 504)), 25_000);
+        started.on('loggedOn', connected);
+        started.on('error', failed);
+        started.on('disconnected', failed);
+        if (this.info.status === 'connected') finish();
+        else if (this.info.status === 'error') failed();
+      });
+    } catch (error) {
+      this.release();
+      throw error;
+    }
+  }
+
   async listGames(): Promise<CloudGame[]> {
     const rpc = this.requireRpc();
     if (this.usePicsGameList) {

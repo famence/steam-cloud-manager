@@ -106,7 +106,7 @@ test('mobile layout has no horizontal overflow and security text is accessible',
   await page.setViewportSize({ width: 390, height: 844 }); await signIn(page);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
   await page.getByRole('button', { name: 'Security', exact: true }).click();
-  await expect(page.getByRole('dialog')).toContainText('not a security audit');
+  await expect(page.getByRole('dialog')).toContainText('not an independent security audit');
   await page.keyboard.press('Escape'); await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.screenshot({ path: 'test-results/library-mobile.png', fullPage: true });
 });
@@ -123,9 +123,21 @@ test('public site is prerendered, localized and makes no Steam/session requests'
   await page.getByLabel('Тема', { exact: true }).selectOption('dark');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await page.getByRole('button', { name: 'Безопасность', exact: true }).click();
-  await expect(page.getByRole('dialog')).toContainText('Это не аудит');
+  await expect(page.getByRole('dialog')).toContainText('не заменяет независимый аудит');
   await page.keyboard.press('Escape');
   expect(calls.some(url => url.includes('/api/') || url.includes('steampowered.com') || url.includes('steamserver.net'))).toBeFalsy();
-  const denied = await request.get('http://127.0.0.1:3111/api/session'); expect(denied.status()).toBe(404);
+  const available = await request.get('http://127.0.0.1:3111/api/session'); expect(available.status()).toBe(200);
   await page.screenshot({ path: 'test-results/public-ru.png', fullPage: true });
+});
+
+test('Vercel-only /app/ signs in with a demo session and renders the Steam library', async ({page}) => {
+  await page.route('https://shared.fastly.steamstatic.com/**', route => route.abort());
+  await page.goto('http://127.0.0.1:3111/app/');
+  await page.getByRole('button',{name:'Open demo',exact:true}).click();
+  await expect(page.getByRole('heading',{name:/^Games/})).toBeVisible();
+  await page.getByRole('button',{name:'Open: Cities: Skylines II',exact:true}).click();
+  await expect(page.locator('tbody tr')).toHaveCount(6);
+  await page.locator('tbody input[type=checkbox]').first().check();
+  await page.getByRole('button',{name:'Delete',exact:true}).click();
+  await expect(page.getByRole('alert')).toContainText('request failed');
 });
