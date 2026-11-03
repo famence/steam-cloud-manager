@@ -18,6 +18,7 @@ const methods = {
   EnumerateUserApps: ['CCloud_EnumerateUserApps_Request', 'CCloud_EnumerateUserApps_Response'],
   GetOwnedGames: ['CPlayer_GetOwnedGames_Request', 'CPlayer_GetOwnedGames_Response'],
   GetAppFileChangelist: ['CCloud_GetAppFileChangelist_Request', 'CCloud_GetAppFileChangelist_Response'],
+  EnumerateUserFiles: ['CCloud_EnumerateUserFiles_Request', 'CCloud_EnumerateUserFiles_Response'],
   ClientFileDownload: ['CCloud_ClientFileDownload_Request', 'CCloud_ClientFileDownload_Response'],
   BeginAppUploadBatch: ['CCloud_BeginAppUploadBatch_Request', 'CCloud_BeginAppUploadBatch_Response'],
   ClientDeleteFile: ['CCloud_ClientDeleteFile_Request', 'CCloud_ClientDeleteFile_Response'],
