@@ -150,6 +150,61 @@ export async function readFileListing(rpc: RpcCaller, appId: number): Promise<Dr
   }
 }
 
+
+/**
+ * Steam's EnumerateUserFiles returns a per-file download URL, documented by
+ * ICloudService. Use it only when the client download RPC cannot serve a file.
+ * The URL remains server-side; openSignedStorageDownload validates host and
+ * pins a public IP before making the HTTPS request.
+ */
+export async function findEnumeratedDownloadUrl(
+  rpc: RpcCaller, appId: number, expected: CloudFile,
+): Promise<string> {
+  assertAppId(appId);
+  const pageSize = 500;
+  const seen = new Set<string>();
+  let start = 0;
+  let total: number | null = null;
+  while (total === null || start < total) {
+    const response = await rpc.call<{
+      total_files: number;
+      files: Array<{ appid: number; filename: string; file_sha: string;
+        file_size: number; timestamp: string; url?: string }>;
+    }>('EnumerateUserFiles', {
+      appid: appId, extended_details: true, count: pageSize, start_index: start,
+    });
+    if (!response || !Array.isArray(response.files) || response.files.length > pageSize) {
+      throw new SteamServiceError('Steam вернул некорректный список файлов.', 'INVALID_STEAM_RESPONSE');
+    }
+    const count = safeInteger(response.total_files, 'количество файлов');
+    if (count > 100_000 || (total !== null && total !== count)
+      || start + response.files.length > count || (start < count && response.files.length === 0)) {
+      throw new SteamServiceError('Steam вернул неполный список файлов.', 'INCOMPLETE_LISTING');
+    }
+    total = count;
+    for (const item of response.files) {
+      if (!item || (item.appid !== 0 && item.appid !== appId)
+        || typeof item.filename !== 'string' || !item.filename
+        || seen.has(item.filename)) {
+        throw new SteamServiceError('Steam вернул неоднозначный список файлов.', 'INVALID_STEAM_RESPONSE');
+      }
+      seen.add(item.filename);
+      if (item.filename !== expected.name) continue;
+      if (typeof item.file_sha !== 'string' || item.file_sha.toLowerCase() !== expected.sha
+        || safeInteger(item.file_size) !== expected.size
+        || safeInteger(item.timestamp, 'время изменения') !== expected.modifiedAt) {
+        throw new SteamServiceError('Сохранение изменилось. Обновите список файлов.', 'FILES_CHANGED', 409);
+      }
+      if (typeof item.url !== 'string' || !item.url) {
+        throw new SteamServiceError('Steam не предоставил ссылку скачивания файла.', 'DOWNLOAD_URL_UNAVAILABLE');
+      }
+      return item.url;
+    }
+    start += response.files.length;
+  }
+  throw new SteamServiceError('Файл больше не найден. Обновите список сохранений.', 'FILES_CHANGED', 409);
+}
+
 // Stop the batch after a session/transport/rate-limit failure. Retrying every remaining
 // filename could hold one HTTP request open for hours and amplify a Steam outage.
 const batchStoppingErrors = new Set([
