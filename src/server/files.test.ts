@@ -27,10 +27,7 @@ test('revision is order independent and covers file contents and Steam change nu
   assert.notEqual(fileRevision(first), fileRevision({ ...first, changeNumber: '9007199254740994' }));
   assert.notEqual(fileRevision(first), fileRevision({ ...first, files: [{ ...a, sha: 'b'.repeat(40) }, b] }));
 });
-test('public hosting requires TLS and an explicit SteamID allowlist', () => {
-  assert.throws(() => readConfig({ APP_ORIGIN: 'http://saves.example.com' }), /HTTPS/);
-  assert.throws(() => readConfig({ APP_ORIGIN: 'https://saves.example.com' }), /ALLOWED_STEAM_IDS/);
-  const config = readConfig({ APP_ORIGIN: 'https://saves.example.com', ALLOWED_STEAM_IDS: '76561198000000000' });
-  assert.ok(config.secureCookies);
-  assert.throws(() => readConfig({ APP_ORIGIN: 'https://user:pass@saves.example.com', ALLOWED_STEAM_IDS: '76561198000000000' }));
+test('remote hosting is rejected even with an account allowlist', () => {
+  assert.throws(() => readConfig({ APP_ORIGIN: 'https://cloud.example.com', ALLOWED_STEAM_IDS: '76561198000000000' }));
+  assert.throws(() => readConfig({ HOST: '0.0.0.0' }));
 });

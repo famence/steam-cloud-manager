@@ -1,56 +1,31 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Download, File, LoaderCircle, Trash2, X } from 'lucide-react';
+import { Download, LoaderCircle, Trash2, X } from 'lucide-react';
 import type { DeletePlan } from '../shared/types';
-import { basename, bytes } from './format';
-
+import { basename } from './format';
+import { usePreferences } from './preferences';
+import { countFiles, formatBytes } from './i18n';
 export default function DeleteDialog({ plan, deleting, exporting, error, onClose, onDelete, onBackup, preparedExport }: {
-  plan: DeletePlan; deleting: boolean; exporting: boolean; error?: string;
+  plan: DeletePlan; deleting: boolean; exporting: boolean; error?: string; preparedExport?: string | null;
   onClose: () => void; onDelete: (confirmation: string) => void; onBackup: () => void;
-  preparedExport?: string | null;
 }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  const [confirmation, setConfirmation] = useState('');
-  const [gamesClosed, setGamesClosed] = useState(false);
-  const [expired, setExpired] = useState(Date.now() >= plan.expiresAt);
-  useEffect(() => {
-    const node = ref.current;
-    if (node && !node.open) node.showModal();
-    const timer = window.setInterval(() => setExpired(Date.now() >= plan.expiresAt), 1000);
-    return () => { window.clearInterval(timer); node?.close(); };
-  }, [plan.expiresAt]);
-  const busy = deleting || exporting;
-  return <dialog ref={ref} className="delete-dialog" aria-labelledby="delete-title" onCancel={event => { if (busy) event.preventDefault(); else onClose(); }}>
-    <div className="dialog-header">
-      <div className="danger-icon"><Trash2 size={24} /></div>
-      <button className="icon-button" onClick={onClose} disabled={busy} aria-label="Закрыть подтверждение"><X size={20} /></button>
-    </div>
-    <h2 id="delete-title">Удалить сохранения?</h2>
-    <p className="muted">Из Steam Cloud будут удалены <strong>{plan.files.length} файлов</strong>, занимающих <strong>{bytes(plan.totalBytes)}</strong>.</p>
-    <div className="delete-warning"><AlertTriangle size={19} /><span>Steam не хранит корзину или предыдущие версии. Удаление необратимо. Сначала скачайте файлы, которые могут понадобиться.</span></div>
-    <div className="delete-files" aria-label="Файлы к удалению">{plan.files.map(file => <div className="delete-file" key={file.name}>
-      <File size={16} /><div><strong>{basename(file.name)}</strong><small>{file.name}</small></div><span>{bytes(file.size)}</span>
-    </div>)}</div>
-    <button className="button button-secondary backup-button" onClick={onBackup} disabled={busy || expired}>
-      {exporting ? <LoaderCircle className="spin" size={17} /> : <Download size={17} />} Скачать эти файлы в ZIP
-    </button>
-    {preparedExport && <a className="button button-primary backup-ready-link" href={preparedExport} download><Download size={17} /> Скачать подготовленный ZIP</a>}
-    <p className="backup-reminder">{preparedExport
-      ? 'Нажмите ссылку выше. Архив начнёт скачиваться после вашего клика. Проверьте готовый файл.'
-      : 'Сначала сохраните резервную копию и проверьте её перед удалением.'}</p>
-    {error && <p className="inline-error" role="alert">{error}</p>}
+  const { t, locale } = usePreferences(); const ref = useRef<HTMLDialogElement>(null);
+  const [confirmation, setConfirmation] = useState(''); const [gamesClosed, setGamesClosed] = useState(false);
+  const [expired, setExpired] = useState(Date.now() >= plan.expiresAt); const busy = deleting || exporting;
+  useEffect(() => { const node = ref.current; node?.showModal(); const timer = setInterval(() => setExpired(Date.now() >= plan.expiresAt), 1000);
+    return () => { clearInterval(timer); node?.close(); }; }, [plan.expiresAt]);
+  return <dialog ref={ref} className="dialog delete-dialog" aria-labelledby="delete-title" onCancel={e => { if (busy) e.preventDefault(); else onClose(); }}>
+    <div className="dialog-top"><h2 id="delete-title">{t.deleteTitle}</h2><button className="icon-button" onClick={onClose} disabled={busy} aria-label={t.close}><X size={20} /></button></div>
+    <p>{countFiles(plan.files.length, locale)} · {formatBytes(plan.totalBytes, locale)}</p><p className="delete-warning">{t.deleteWarning}</p>
+    <div className="delete-files">{plan.files.map(file => <div className="delete-file" key={file.name}><div><strong>{basename(file.name)}</strong><small>{file.name}</small></div><span>{formatBytes(file.size, locale)}</span></div>)}</div>
+    <button type="button" className="button full-width" onClick={onBackup} disabled={busy || expired}>{exporting ? <LoaderCircle size={17} className="spin" /> : <Download size={17} />}{exporting ? t.downloading : t.zip}</button>
+    {preparedExport && <a className="button button-primary full-width" href={preparedExport} download>{t.downloadPrepared}</a>}
+    <p className="helper-text">{t.backupNotice}</p>{error && <p className="error-message" role="alert">{error}</p>}
     <form onSubmit={event => { event.preventDefault(); if (!busy && !expired && gamesClosed && confirmation === plan.confirmation) onDelete(confirmation); }}>
-      <label className="checkbox-label warning-check"><input type="checkbox" checked={gamesClosed} onChange={event => setGamesClosed(event.target.checked)} disabled={busy} />
-        <span>Я закрыл игру и сессии GeForce NOW на всех устройствах.<small>Иначе синхронизация может вернуть файлы в облако.</small></span>
-      </label>
-      <label className="confirm-label" htmlFor="delete-confirmation">Для подтверждения введите <strong>{plan.confirmation}</strong></label>
-      <input id="delete-confirmation" className="text-input" value={confirmation} onChange={event => setConfirmation(event.target.value)} disabled={busy || expired} autoComplete="off" spellCheck={false} placeholder={plan.confirmation} />
-      {expired && <p className="inline-error" role="alert">Подтверждение устарело. Закройте окно и выберите удаление заново.</p>}
-      <div className="dialog-actions">
-        <button className="button button-secondary" type="button" onClick={onClose} disabled={busy}>Отмена</button>
-        <button className="button button-danger" type="submit" disabled={busy || expired || !gamesClosed || confirmation !== plan.confirmation}>
-          {deleting ? <LoaderCircle className="spin" size={17} /> : <Trash2 size={17} />}{deleting ? 'Удаление…' : 'Удалить навсегда'}
-        </button>
-      </div>
+      <label className="check-line"><input type="checkbox" checked={gamesClosed} onChange={e => setGamesClosed(e.target.checked)} disabled={busy} /><span>{t.gamesClosed}</span></label>
+      <label className="confirmation-label" htmlFor="delete-confirmation">{t.typePhrase} <strong>{plan.confirmation}</strong></label>
+      <input id="delete-confirmation" className="text-input" value={confirmation} onChange={e => setConfirmation(e.target.value)} disabled={busy || expired} autoComplete="off" spellCheck={false} />
+      {expired && <p className="error-message" role="alert">{t.expiredPlan}</p>}
+      <div className="dialog-actions"><button type="button" className="button" onClick={onClose} disabled={busy}>{t.cancel}</button><button type="submit" className="button button-danger" disabled={busy || expired || !gamesClosed || confirmation !== plan.confirmation}>{deleting ? <LoaderCircle size={17} className="spin" /> : <Trash2 size={17} />}{t.confirmDelete}</button></div>
     </form>
   </dialog>;
 }

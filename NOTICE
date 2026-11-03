@@ -1,0 +1,4 @@
+The source code is licensed under MIT. Steam is a trademark of Valve Corporation.
+Game titles and cover images belong to their respective owners. The MIT license
+does not grant rights to third-party game artwork or trademarks. Game images are
+requested from Steam's CDN at runtime; they are not bundled with this project.

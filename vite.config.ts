@@ -1,14 +1,9 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-
-export default defineConfig({
-  plugins: [react()],
-  root: 'src/client',
-  build: { outDir: '../../dist/client', emptyOutDir: true },
-  server: {
-    port: 5173,
-    strictPort: true,
-    // Vite uses prefix matching: /api would also intercept the client module /api.ts.
-    proxy: { '/api/': 'http://127.0.0.1:3000' },
-  },
-});
+import { resolve } from 'node:path';
+export default defineConfig(({ mode }) => ({
+  plugins: [react()], root: 'src/client',
+  build: { outDir: mode === 'public' ? '../../dist/public' : '../../dist/client', emptyOutDir: true,
+    ...(mode === 'public' ? { rollupOptions: { input: resolve('src/client/public.html') } } : {}) },
+  server: { host: '127.0.0.1', port: 5173, strictPort: true, proxy: { '/api/': 'http://127.0.0.1:3000' } },
+}));

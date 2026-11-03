@@ -1,107 +1,47 @@
-# Архитектура
+# Architecture
 
-## Назначение и граница доверия
+## Local application and static website
 
-Steam Cloud Manager — персональный веб-инструмент с клиентской сессией Steam. Браузер обращается к своему Node.js-серверу; сервер поддерживает соединение со Steam и выполняет операции от имени подключённого аккаунта. Оператор процесса имеет доступ к этой сессии и должен быть доверенным.
+`npm run build` creates the local React UI (`dist/client`) and Fastify process (`dist/server`). `npm start` serves both on loopback. Development uses Vite port 5173 and proxies only `/api/` to port 3000; `/api.ts` must remain a frontend module.
 
-QR-вход здесь не означает выдачу ограниченного OAuth-разрешения на Cloud. `steam-session` создаёт SteamClient-сессию, а `steam-user` подключается к Steam CM. Обычный OpenID подтверждает только личность. Для официального Cloud OAuth Valve выдаёт отдельный Client ID и согласует AppId. Эти ограничения описаны в [документации Valve](https://partner.steamgames.com/doc/webapi_overview/oauth).
+`npm run build:public` uses an independent entry point and prerenders `/en/` and `/ru/` into `dist/public`. It does not import the local application or API client. Only this directory is deployed to Vercel. The public website contains installation and security information, not a hosted Steam-session manager. Its CSP prohibits JavaScript network connections. `scripts/verify-public.mjs` and browser tests verify this separation.
 
-Для публичного многопользовательского SaaS потребуется иной подход: согласованный Valve OAuth либо отдельный локальный агент пользователя. Текущую реализацию следует размещать для себя и явно разрешённых аккаунтов.
+## Trust boundary
 
-## Компоненты
+Browser at loopback -> local Fastify process -> Steam CM/auth and validated Steam storage.
 
-| Компонент | Ответственность |
-| --- | --- |
-| React / Vite, `src/client` | Подключение Steam, просмотр файлов, поиск, выбор, подтверждение удаления и показ результата. |
-| Fastify, `src/server` | Браузерные сессии, CSRF и origin-проверки, планы удаления, потоковая выдача файлов и ZIP. |
-| Steam-драйвер, `src/server/steam` | QR-вход, Steam CM, protobuf Cloud RPC, сопоставление ответов с типами приложения. |
-| `src/shared/types.ts` | Общие типы HTTP-ответов клиента и сервера. |
-| Демо-драйвер | Отдельные искусственные данные без вызовов Steam. |
+Steam refresh/access tokens remain in the local process. The browser receives a QR challenge, session status and library/file metadata, not Steam refresh/access tokens. The public website receives none of these. Trust in the local process, browser and dependencies remains necessary. See SECURITY.md; no independent audit is implied.
 
-В production один процесс Fastify обслуживает и API, и собранный интерфейс. В разработке Vite обслуживает интерфейс на `5173` и проксирует `/api` на Fastify `3000`.
+The backend rejects public bind addresses, remote origins and a Vercel runtime. Host/origin/CSRF checks and SameSite HttpOnly cookies protect the local API. Sessions are memory-only. Restarting requires signing in again. There is no hosted CORS relay or claim of generic Steam OAuth access.
 
-## Сессия
+## Steam compatibility
 
-Браузер получает непрозрачный идентификатор сессии в HttpOnly cookie. Состояние входа, Steam-клиент и временные планы находятся в памяти сервера. Steam refresh token не включается в браузерные ответы, не записывается в базу данных или конфигурацию.
+The adapter is pinned to steam-user 5.3.0 and steam-session 1.9.4. Cloud RPCs use the installed protobuf schemas. Library discovery tries legacy Cloud inventory, Player.GetOwnedGames, then PICS ownership. Every path classifies applications using PICS type metadata; only an explicit game type appears in the library. Unknown types can be opened by AppID.
 
-QR создаётся на сервере, без стороннего сервиса генерации. Браузер опрашивает состояние подключения, пока пользователь подтверждает запрос в Steam Guard. После Steam-входа сервер проверяет `ALLOWED_STEAM_IDS`, если список задан. При внешнем `APP_ORIGIN` список обязателен.
+Cloud support is inferred conservatively from positive UFS quotas/category metadata. Only explicit zero quotas produce unsupported. Missing metadata stays unknown. A positive file listing overrides an unsupported metadata flag.
 
-Выход и истечение срока сессии закрывают её Steam-соединение. Таймаут неактивности по умолчанию — 60 минут, настраиваемый диапазон — 5–240 минут; максимальный возраст сессии — четыре часа. Уже начатая операция или передача файла удерживает сессию до завершения. Неподключённые сессии живут не больше пяти минут и могут вытесняться при заполнении лимита, не затрагивая подключённые аккаунты. Каждый новый QR-вход очищает планы удаления и ссылки на архивы предыдущего аккаунта. Перезапуск процесса завершает все сессии. Горизонтальное масштабирование без переноса сессий в отдельный сервис не поддерживается.
+File listing uses GetAppFileChangelist with a paginated EnumerateUserFiles fallback for selected unsupported-method responses. Downloads use ClientFileDownload with a metadata-verified signed URL fallback. Storage hosts and public DNS addresses are allowlisted/pinned; size and SHA1 are checked while streaming. Unsupported encodings and integrity failures fail closed.
 
-Изменяющие запросы требуют CSRF-токен и соответствующий origin. `APP_ORIGIN` задаётся оператором, а не берётся из непроверенного заголовка запроса. Сервис не предоставляет произвольный прокси к Steam API и не принимает Steam-токены из пользовательского ввода.
+## Library and summaries
 
-## HTTP API
+The lightweight metadata list is fetched once. Search, ordering and card pagination are client-side. The first 24 cards render; IntersectionObserver reveals subsequent batches, with a keyboard-accessible button fallback. Covers load lazily and show placeholders on errors. This is not server-side PICS pagination.
 
-Все пути относительны одному origin интерфейса. JSON-запросы с изменениями передают `Content-Type: application/json` и `x-csrf-token`, полученный из `/api/session`. Ошибки возвращаются как `{ "error": { "code": "…", "message": "…" } }`.
+Cloud summaries run for a snapshot of a revealed batch, at most two concurrent checks. Result-driven reordering does not recursively scan the entire account. A per-account backend cache coalesces requests, expires after 60 seconds and holds at most 1,000 entries. File operations bypass the summary cache. Failed checks never mark games empty.
 
-| Метод и путь | Назначение |
-| --- | --- |
-| `GET /api/session` | Текущая сессия, режим live/demo, CSRF-токен и состояние Steam-входа. |
-| `POST /api/auth/steam` | Начать Steam QR-вход. |
-| `POST /api/auth/logout` | Завершить подключение и браузерную сессию. |
-| `GET /api/games` | Игры с данными Steam Cloud. |
-| `GET /api/games/:appId/files` | Полный список файлов и revision для проверки актуальности. |
-| `GET /api/games/:appId/download?name=…` | Скачать один существующий Cloud-файл потоком. |
-| `POST /api/games/:appId/exports` | Создать временную ссылку на ZIP выбранных файлов. |
-| `GET /api/exports/:id` | Скачать подготовленный выбор потоком; ссылка связана с сессией. |
-| `POST /api/games/:appId/delete-plan` | Проверить выбор и создать ограниченный по времени план удаления. |
-| `POST /api/games/:appId/delete` | Выполнить подтверждённый план с повторной проверкой состояния. |
+Confirmed empty/unsupported games sort last and are visually muted but stay accessible. Favorites sort first within available/unknown games and within inactive games. Browser storage contains language/theme and favorite AppIDs keyed by SteamID, not cloud file lists or tokens.
 
-Обращение к конкретному AppId не требует, чтобы игра присутствовала в автоматически загруженном списке. Доступ к её файлам всё равно проверяет Steam для текущего аккаунта. За одну выборку экспорта или удаления допускается до 500 имён.
+## File operations
 
-## Steam Cloud RPC
+Deletion needs a one-use account-bound plan, exact confirmation, acknowledgement that games are closed and a fresh file revision. Plans expire after five minutes. The driver completes the upload batch even after partial failure and verifies remaining files. There is no rollback or lock against another Steam client.
 
-Адаптер закреплён за версиями `steam-user 5.3.0` и `steam-session 1.9.4`. Готового публичного Cloud wrapper в `steam-user` нет: адаптер отправляет вручную закодированные сообщения через внутренний CM-транспорт. Схемы берутся из самого установленного пакета; версия фиксируется в lockfile.
+ZIP backups stream through the local process. File System Access browsers save through a WritableStream; other browsers use an explicit single-use download link. Preflight errors are shown in the deletion dialog. Tests use artificial saves, never real accounts.
 
-| RPC | Использование |
-| --- | --- |
-| `Cloud.EnumerateUserApps#1` | Устаревший способ получить AppId игр и общий размер Cloud; теперь может возвращать общий отказ `EResult 2`. |
-| `Player.GetOwnedGames#1` | Резервный список всех игр аккаунта, не только облачных; сведения о Cloud-файлах отсутствуют до отдельного запроса. |
-| `steam-user` PICS ownership cache | При отказе обоих методов перечисления получает приобретённые приложения из лицензий/пакетов Steam; требует `enablePicsCache` и `ownershipCached`. |
-| `Cloud.EnumerateUserFiles#1` | Резервное постраничное чтение облачных файлов одной игры (предел 500 за страницу), если changelist RPC отклонён. |
-| `Cloud.GetAppFileChangelist#1` | Активные Cloud-файлы, имена с префиксами, SHA, размер, время и номер изменения. |
-| `Cloud.ClientFileDownload#1` | Параметры скачивания конкретного файла. |
-| `Cloud.BeginAppUploadBatch#1` | Объявление набора намеренных удалений. |
-| `Cloud.ClientDeleteFile#1` | Удаление файла с `is_explicit_delete=true`. |
-| `Cloud.CompleteAppUploadBatchBlocking#1` | Подтверждаемое завершение batch, включая случаи ошибок. |
+## Language, themes and SEO
 
-64-битные идентификаторы и change number передаются строками, чтобы избежать потери точности JavaScript Number. Имена Cloud-файлов считаются непрозрачными ключами Steam. Они не превращаются в локальные файловые пути. Удалённые и forgotten-записи не показываются как активные сохранения.
+The local UI stores language/theme preferences in the browser. System theme changes are observed. Message keys are identical in English and Russian. The confirmation phrase follows Accept-Language at plan creation and stays fixed while the review is open.
 
-Если старый `Cloud.EnumerateUserApps` отклонён Steam (например, `EResult 2`), сервер пробует `Player.GetOwnedGames`; если и тот отклонён, используется PICS-кэш `steam-user`, не зависящий от этих двух unified RPC. Данные могут собираться до 30 секунд после входа; таймаут возвращает явную ошибку. Поля `fileCount` и `totalBytes` для просто приобретённых игр равны `null`, что означает «не проверено», а не пустое облако. Для просмотра конкретной игры сначала вызывается `Cloud.GetAppFileChangelist`, при некоторых ответах Steam — `Cloud.EnumerateUserFiles` с пагинацией и валидацией SHA/времени/размеров. Резервный список игр не гарантирует доступ к Cloud-файлам. До удаления проверяется тот же набор файлов; если сервер отказал в чтении, операция не начинается.
+Public `/en/` and `/ru/` URLs have prerendered text, reciprocal hreflang and canonical URLs when SITE_URL or the Vercel production URL is known. Preview/unconfigured builds are noindex; the local UI is always noindex. SEO metadata does not guarantee indexing or rankings.
 
-Адаптер должен считать успешным только явный успешный `EResult` из заголовка Steam. Таймаут и ошибка протокола не означают успешное выполнение операции. Изменение клиентского протокола может потребовать обновления адаптера; автоматическое обновление закреплённых пакетов без проверки недопустимо.
+## Verification
 
-## Двухэтапное удаление
-
-Клиент отправляет выбранные имена и revision списка. Сервер проверяет их относительно актуального состояния, сохраняет конкретный набор файлов и возвращает план с итоговым объёмом, сроком действия и текстом подтверждения. План действителен пять минут.
-
-Пользователь видит именно этот набор, подтверждает закрытие игры и вводит указанную фразу. При выполнении сервер проверяет принадлежность плана сессии и игре, срок, подтверждение и актуальность файлов. Изменившееся состояние требует нового выбора и подтверждения.
-
-Cloud-драйвер начинает batch, последовательно удаляет файлы и завершает batch в `finally`. При системном таймауте, разрыве соединения или ограничении запросов оставшиеся удаления останавливаются. Успехи, ошибки и неотправленные операции собираются отдельно; результат проверяется повторным чтением Cloud. Batch не обеспечивает rollback: успешные удаления остаются в силе, даже если следующий запрос завершился ошибкой. Если завершение batch не подтверждено, это отражается в результате и требует обновления состояния.
-
-Официальная документация [ICloudService](https://partner.steamgames.com/doc/webapi/ICloudService) отдельно требует завершать batch даже при неудачных операциях. Она также предупреждает, что Steam не сохраняет предыдущие версии удалённых файлов.
-
-Повторная проверка снижает риск удалить изменившийся сейв, но не блокирует действия другого игрового клиента. Поэтому игру и текущую GFN-сессию нужно закрыть до очистки. Одновременная внешняя синхронизация остаётся возможной гонкой за пределами процесса сервиса.
-
-## Скачивание и ZIP
-
-Сервер получает адрес скачивания от Steam; клиент не задаёт произвольный URL. Выдача идёт потоком с ограничением допустимых адресов и перенаправлений. Зашифрованные или неподдерживаемые форматы скачивания завершаются ошибкой, а не выдаются как рабочий файл сохранения.
-
-ZIP создаётся последовательно и отправляется в браузер по мере чтения файлов. Пакет сохранений размером в несколько гигабайт не должен требовать столько же оперативной памяти. Для файла в архиве используется безопасное имя; исходное имя Steam не используется для записи на диск сервера.
-
-Архивная ссылка временная, связана с сессией и не заменяет авторизацию. Необходимо дождаться полного окончания скачивания: при сетевой ошибке поток может оборваться. Перед удалением пользователь должен проверить пригодность своей резервной копии.
-
-## Проверка и эксплуатация
-
-`npm run check` запускает TypeScript, автоматические тесты и production-сборку. Протокольные тесты и подставной драйвер проверяют поведение без изменения реального Steam Cloud. Проверка по настоящему аккаунту выполняется владельцем отдельно; сам факт успешной сборки её не подтверждает.
-
-Для production используйте HTTPS, точный `APP_ORIGIN`, список разрешённых SteamID и один процесс. Увеличьте сетевые таймауты proxy для больших архивов. Не добавляйте журналирование QR challenge, токенов, cookie или заголовков авторизации. База данных, секрет API key и сохранение игровых файлов на сервере для базового сценария не нужны.
-
-## Первичные источники
-
-- [Steam OpenID и проверка личности](https://partner.steamgames.com/doc/features/auth).
-- [Steam OAuth: Client ID, AppId и Cloud scopes](https://partner.steamgames.com/doc/webapi_overview/oauth).
-- [Официальный ICloudService](https://partner.steamgames.com/doc/webapi/ICloudService).
-- [Steam Cloud protobuf в steam-user](https://github.com/DoctorMcKay/node-steam-user/blob/master/protobufs/steammessages_cloud.steamclient.proto).
-- [Внутренний CM-транспорт steam-user](https://github.com/DoctorMcKay/node-steam-user/blob/master/components/03-messages.js).
-- [QR-вход steam-session](https://github.com/DoctorMcKay/node-steam-session).
+Unit/API/protocol tests cover data boundaries and failures. Playwright tests cover settings, library navigation, lazy rendering, backup/deletion and the static site's network boundary. Browser tooling has a separate lockfile under tests/e2e. CI runs read-only without Steam credentials on Node.js 22/24. Branch protection and deployment gates are separate maintainer settings.

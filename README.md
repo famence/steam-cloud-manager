@@ -1,179 +1,89 @@
 # Steam Cloud Manager
 
-Личный веб-инструмент для управления сохранениями Steam Cloud: найти самые большие файлы, скачать резервную копию и удалить ненужные сохранения по одному или группой. Интерфейс на русском языке; приложение запускается на своём компьютере или сервере.
+[Русский](README.ru.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
-## Возможности
+Browse, back up and delete Steam Cloud saves from a local web interface. MIT-licensed. English and Russian, system/light/dark themes, favorites, searchable game cards and lazy card loading.
 
-- Вход через QR-код с подтверждением в Steam Guard.
-- Список игр Steam и просмотр файлов конкретной игры. Если Steam не поддерживает старый метод перечисления Cloud-игр, показывается библиотека с пометкой «Cloud не проверено»; после открытия игры загружаются настоящие метаданные файлов.
-- Файлы по каждой игре: полный путь, размер и дата изменения.
-- Поиск, сортировка, множественный выбор; до 500 файлов за одну операцию.
-- Скачивание одного файла или потокового ZIP-архива выбранных файлов. Содержимое архива не собирается целиком в памяти сервера.
-- Одиночное и массовое удаление с предварительным списком, явным подтверждением и проверкой актуальности файлов.
-- Отдельный результат для каждого файла при частично выполненном удалении.
-- Демо-режим с искусственными файлами, который не подключается к Steam.
+## Important: local app, static public website
 
-Переименование и загрузка сохранений с диска пока не реализованы. Просмотр означает список файлов и их метаданных: внутренние форматы сохранений разных игр приложение не разбирает.
+The manager runs on **your computer**. The Node.js process connects to Steam and keeps Steam session tokens in memory. A Vercel deployment serves only the public website and installation instructions; it has no Steam login, session, save-file or proxy endpoints.
 
-## Как устроен вход
+This is not a browser-only manager: it requires a local Node.js process. During development the tested Steam CM endpoint accepted a WebSocket without an Origin and with the Steam Community origin, but rejected the project's website origin with HTTP 403. Rather than route full Steam sessions through a hosted proxy, the project keeps that connection local. Steam behavior can change; the integration uses unofficial client protocols.
 
-**Это инструмент для собственного Steam-аккаунта на доверенном сервере.** QR-код подключает полноценную клиентскую сессию Steam. Её полномочия шире доступа к сохранениям; устанавливайте приложение только у себя или у оператора, которому доверяете доступ к аккаунту. Пароль Steam в интерфейсе приложения не запрашивается.
+See [SECURITY.md](SECURITY.md) for the exact data flow, residual risks and reporting policy. The project has not undergone an independent security audit.
 
-Обычный Steam OpenID возвращает SteamID и не предоставляет доступ к Cloud. Официальный HTTP `ICloudService` требует OAuth Client ID, который выдаёт Valve, и разрешения `read_cloud` / `write_cloud` для согласованных AppId. Поэтому здесь используется Steam-клиентский протокол через `steam-session` и `steam-user`, а не неподдерживаемое обещание универсального Cloud OAuth.
+## Run locally
 
-Клиентские токены и браузерные сессии хранятся только в памяти процесса. База данных и Steam Web API key не нужны. После выхода, истечения сессии или перезапуска сервера нужно подключиться заново. Максимальная длительность сессии — четыре часа; уже начатой операции или скачиванию сервер даёт завершиться. Приватность репозитория сама по себе не ограничивает доступ к запущенному сайту: для внешнего размещения предусмотрен список разрешённых SteamID.
+Requires Node.js **22.12+** and Windows, macOS or Linux.
 
-## Быстрый запуск на Mac, Linux или Windows
-
-Нужен Node.js **22.12 или новее**; рекомендуем Node.js 24 LTS.
-
-```bash
+```sh
 git clone https://github.com/famence/steam-cloud-manager.git
 cd steam-cloud-manager
 npm ci
-cp .env.example .env
+npm run build
+npm start
+```
+
+Open `http://127.0.0.1:3000`. Confirm the QR sign-in in Steam Guard. Signing out or stopping the process ends the application's local session. No Steam Web API key or hosted database is needed.
+
+For development:
+
+```sh
 npm run dev
 ```
 
-Откройте [http://127.0.0.1:5173](http://127.0.0.1:5173). В Windows можно скопировать `.env.example` в `.env` через проводник или `Copy-Item .env.example .env` в PowerShell.
+Open `http://127.0.0.1:5173`. Optional settings are documented in `.env.example`; defaults work without an `.env` file. Do not reuse a remote `APP_ORIGIN` from older versions. Public backend hosting is intentionally rejected. Container hosting is not part of the supported setup; use the local Node process instead.
 
-1. Нажмите кнопку подключения Steam.
-2. Сканируйте QR-код в мобильном приложении Steam и проверьте запрос подключения устройства.
-3. Подтвердите вход в Steam Guard.
-4. Выберите игру и нужные файлы.
+Set `DEMO_MODE=true` in a local `.env` to test with artificial saves and no Steam account.
 
-Для серверного режима с собранным интерфейсом:
+## Using the library
 
-```bash
-npm run build
-NODE_ENV=production APP_ORIGIN=http://127.0.0.1:3000 npm start
-```
+The library contains applications classified by Steam metadata as games, not DLC, tools or soundtracks. Unclassified titles can be opened manually with a numeric AppID or a Steam store `/app/` URL.
 
-Откройте [http://127.0.0.1:3000](http://127.0.0.1:3000). В PowerShell задайте переменные `$env:NODE_ENV='production'` и `$env:APP_ORIGIN='http://127.0.0.1:3000'` перед `npm start`. Приложение также читает `.env` из рабочего каталога.
+Favorites are stored in this browser per Steam account. Available and unverified favorites appear first; confirmed empty/unsupported games remain at the end, even when favorited. The full lightweight game metadata list is fetched once. Cards and cover images are revealed lazily in batches of 24 as you scroll; this is incremental rendering, not server-side pagination of the PICS inventory.
 
-### Демо без Steam-аккаунта
+Cloud file counts are checked in small batches, with at most two checks per account in parallel and a short-lived local cache. The application distinguishes:
 
-Установите `DEMO_MODE=true` в `.env` и запустите приложение. В интерфейсе будет явно указан демо-режим. Файлы и все изменения в нём искусственные; они не связаны со Steam Cloud. Для возвращения к настоящему аккаунту задайте `DEMO_MODE=false` и перезапустите процесс.
+- Saves found: a confirmed file count and size.
+- No cloud saves: an actual successful empty response.
+- Steam Cloud not supported: explicit metadata indicating zero Cloud quotas.
+- Not checked or failed check: unknown, never treated as zero.
 
-## Запуск в Docker
+Some games do not expose enough metadata to establish support. Their state stays unknown until checked. Sorting can change as new results arrive.
 
-```bash
-docker compose up --build -d
-```
+## Backups and deletion
 
-Адрес: [http://127.0.0.1:3000](http://127.0.0.1:3000). Compose публикует порт только на loopback хоста. Контейнер работает от непривилегированного пользователя, без постоянного хранилища токенов.
+Download individual files or select up to 500 files for a ZIP backup. In Chromium browsers with the File System Access API, data streams to the chosen destination. Other browsers get an explicit, single-use download link, including inside the deletion dialog. Wait for the download to finish and verify the archive before deleting anything.
 
-```bash
-docker compose logs -f
-docker compose down
-```
+Deletion requires a fresh review, exact confirmation phrase and confirmation that the game and GeForce NOW are closed. Files are rechecked before the batch. Partial errors are reported. There is no rollback/recycle bin; another active game client may upload files again. Renaming and upload are not implemented.
 
-Если в `.env` явно задан `APP_ORIGIN`, он должен совпадать с адресом, который открыт в браузере. Для стандартного Docker-запуска используйте `http://127.0.0.1:3000`, для `npm run dev` — `http://127.0.0.1:5173`.
+## Checks and CI
 
-## Размещение на своём сервере
-
-Нужен постоянно работающий Node.js-процесс или контейнер. Steam-соединение и сессии привязаны к памяти этого процесса: используйте **один экземпляр**. Развёртывание в обычных stateless-функциях или несколько независимых реплик потребует другой архитектуры с отдельным сервисом сессий.
-
-Перед внешним размещением:
-
-1. Настройте HTTPS reverse proxy перед локальным портом `3000`.
-2. Укажите точный внешний `APP_ORIGIN`, например `https://cloud.example.com`.
-3. Укажите собственный 64-битный SteamID в `ALLOWED_STEAM_IDS`. Для нескольких разрешённых аккаунтов перечислите ID через запятую.
-4. Сохраните доступ к серверу и журналам только для доверенных администраторов.
-
-Пример настроек `.env` для сервера с reverse proxy:
-
-```dotenv
-APP_ORIGIN=https://cloud.example.com
-ALLOWED_STEAM_IDS=76561198000000000
-SESSION_TTL_MINUTES=60
-DEMO_MODE=false
-```
-
-Замените пример SteamID на свой. При внешнем origin приложение требует список разрешённых аккаунтов. На собственном компьютере с loopback origin список необязателен. Для крупного ZIP настройте таймаут reverse proxy с учётом времени скачивания и отключите буферизацию ответа, если она включена.
-
-### Переменные окружения
-
-| Переменная | Значение по умолчанию | Назначение |
-| --- | --- | --- |
-| `APP_ORIGIN` | `http://127.0.0.1:5173` в разработке; `http://127.0.0.1:3000` в production | Точный origin браузерного интерфейса: схема, хост и порт. |
-| `HOST` | `127.0.0.1` | Адрес прослушивания Node.js. В контейнере Compose устанавливает `0.0.0.0`. |
-| `PORT` | `3000` | Порт API и собранного интерфейса. Vite в разработке использует `5173`. |
-| `NODE_ENV` | режим разработки | `production` для запуска собранного сервера. |
-| `DEMO_MODE` | `false` | Искусственные данные без соединения со Steam. |
-| `ALLOWED_STEAM_IDS` | пусто | Разрешённые SteamID через запятую; обязательны при внешнем размещении. |
-| `SESSION_TTL_MINUTES` | `60` | Время неактивности до завершения сессии: от 5 до 240 минут. |
-| `STEAM_HTTP_PROXY` | не задан | Необязательный HTTP(S)-прокси для QR-входа и Steam CM. При отсутствии используются `HTTPS_PROXY` / `HTTP_PROXY`. |
-
-Прокси относится к авторизации и соединению Steam-клиента. Скачивание сохранений использует отдельный прямой HTTPS-транспорт с проверкой адреса хранилища. Для него нужен прямой доступ к Steam storage. В Docker адрес `127.0.0.1` в настройке прокси означает сам контейнер, а не компьютер хоста.
-
-## Как удалять сохранения
-
-Сначала завершите игру, в том числе сессию GeForce NOW, и дождитесь окончания текущей синхронизации Steam. Синхронизация со старой локальной копией может повлиять на последующее состояние облака.
-
-1. Найдите файлы по игре, имени, размеру или дате.
-2. Скачайте нужную резервную копию. Проверьте, что загрузка завершилась и архив открывается.
-3. Выберите ненужные файлы и откройте подтверждение удаления.
-4. Проверьте имена, объём и количество; подтвердите, что игра закрыта, и введите указанную фразу.
-
-Сервер создаёт план удаления на пять минут и повторно читает список перед выполнением. Если состояние изменилось, потребуется обновить список и подтвердить новый план. Удаление нельзя отменить внутри Steam Cloud: предыдущие версии не сохраняются. Batch не является транзакцией с откатом; если часть запросов завершится ошибкой, успешно удалённые файлы уже исчезнут. Интерфейс показывает частичный результат отдельно.
-
-Приложение не запускает игры и не изменяет локальные папки Steam. Оно работает с облачными файлами; последующая синхронизация на игровых устройствах остаётся обязанностью клиента Steam и самой игры.
-
-## Ограничения и проверка
-
-- Steam Cloud RPC — непубличный клиентский протокол. Valve может изменить его без обещания совместимости. Версии `steam-user` и `steam-session` закреплены, транспорт изолирован в отдельном адаптере.
-- Старый метод `Cloud.EnumerateUserApps#1` отсутствует в актуальном SteamKit и может отвечать `EResult 2`. Для загрузки игр сервис пробует `Player.GetOwnedGames#1`, а при отказе обоих — локально собранный PICS-кэш Steam (`getOwnedApps`, `ownershipCached`). Это список приобретённых игр, а не перечень Cloud-сохранений. До индивидуального чтения игры количество и размер её Cloud-файлов неизвестны, это **не ноль**.
-- Если `Cloud.GetAppFileChangelist#1` также отклонён, список файлов конкретной игры запрашивается через постраничный `Cloud.EnumerateUserFiles#1` с проверкой полноты списка и SHA. Обе операции чтения могут оказаться недоступны: наличие резервного метода не гарантирует доступ к Cloud.
-- Некоторые Cloud-файлы могут быть зашифрованы или храниться в формате, требующем дополнительной обработки. Неподдерживаемое скачивание должно завершаться явной ошибкой; приложение не должно выдавать такие данные за корректный сейв. Просмотр метаданных и удаление от скачивания не зависят.
-- Названия и размеры файлов доступны только после подключения своего аккаунта; живые данные не заменяются демонстрационными.
-- Автоматические тесты используют подставной Cloud-драйвер и протокольные фикстуры. Они не заменяют проверку текущего поведения Steam на своём аккаунте.
-- Получение QR-кода от настоящего Steam проверено без входа в аккаунт. Подключение аккаунта владельца и удаление реального сохранения не выполнялись. Первый проход начните с чтения и скачивания; для проверки удаления выберите только заведомо ненужный файл.
-
-Первоначальная версия прошла 34 автоматические проверки API, сессий, Cloud-протокола и целостности файлов. Для резервного получения библиотеки добавлены новые протокольные тесты; их необходимо выполнить после обновления зависимостей. В Chromium проверены демо-вход, поиск, сортировка, одиночное скачивание, ZIP с проверкой SHA1, подтверждённое удаление демонстрационного файла, выход и мобильный экран 390 px. Production-сборка проходит. `npm audit` не обнаружил известных уязвимостей на момент проверки; для исправленных транзитивных версий заданы явные overrides. Docker-конфигурация подготовлена; сборка контейнера в этой среде не выполнялась.
-
-### Если Steam вернул STEAM_RESULT_2
-
-Это общий отказ сервиса Steam, а не ошибка QR-кода. В старой версии при таком ответе на `Cloud.EnumerateUserApps#1` библиотека совсем не загружалась. Новая версия сначала пробует Cloud, затем `Player.GetOwnedGames#1`, а при втором отказе — независимый PICS-кэш лицензий и приложений. В этом режиме показываются **все принадлежащие аккаунту игры**, а не только игры с облачными файлами. Размер облака для непроверенных игр показан как «—», а не вымышленный ноль.
-
-Чтобы проверить конкретную игру даже при недоступности списка, введите её AppID в меню слева, например `949230` для Cities: Skylines II. Если запрос `/api/games/949230/files` тоже возвращает EResult 2, клиент автоматически попробует альтернативный `Cloud.EnumerateUserFiles#1`. Если и он откажет, это отдельная проблема доступности Cloud, а не проблема списка игр. Ничего не удаляйте, пока чтение и резервное копирование не работают.
-
-В логах сервера теперь видно имя отклонённого метода (`steamMethod`), но не сохраняются Steam-токены, QR-код или имена файлов. При запуске `npm run dev` после `git pull` перезапустите оба процесса. **Перезапуск завершает Steam-сессию**, потребуется новый QR. PICS-кэш может заполняться до 30 секунд после входа; если увидите «Библиотека ещё загружается», используйте кнопку «Повторить».
-
-Проверка проекта:
-
-```bash
+```sh
 npm run check
+npm run test:browser:install
+npm run test:e2e
 ```
 
-Команда проверяет TypeScript, запускает тесты и собирает клиент и сервер. Отдельно доступны `npm run typecheck`, `npm test` и `npm run build`. Автоматический workflow GitHub Actions не включён.
+GitHub Actions runs type checks, unit/API/protocol tests, local and public builds on Node.js 22/24, a production dependency audit and Chromium browser scenarios using demo data. It uses pinned actions, read-only permissions and no Steam or deployment secrets. Dependabot checks npm and Actions updates weekly.
 
+Required status checks, branch protection and Vercel Deployment Checks are account settings that must be enabled by the maintainer. Adding a workflow does not enable those gates automatically.
 
-### Скачивание резервных копий
+## Public website on Vercel
 
-В Chrome/Edge и других браузерах с поддержкой File System Access API выбор места сохранения начинается непосредственно при нажатии «Скачать ZIP». Архив передаётся потоком на диск, без создания многогигабайтного Blob в памяти браузера. Сетевые и HTTP-ошибки отображаются в интерфейсе.
+Import this repository into a **separate Vercel project**. `vercel.json` installs dependencies, runs `npm run check` (tests and both builds) and publishes only `dist/public`. Do not configure Steam credentials or a backend/API rewrite.
 
-В Safari/Firefox приложение сначала готовит ZIP и показывает **настоящую ссылку** «Скачать подготовленный ZIP», в том числе прямо в окне подтверждения удаления. Нажмите на неё вручную: так браузер не блокирует скачивание, запущенное программно после асинхронного запроса. Ссылка действует до пяти минут и допускает одно использование. Дождитесь завершения и проверьте полученный архив до удаления сохранений.
+The public pages `/en/` and `/ru/` are prerendered HTML with localized titles/descriptions, Open Graph metadata, `hreflang`, canonical URLs, SoftwareApplication microdata, `robots.txt` and a sitemap. Set `SITE_URL` to your final HTTPS origin, or use Vercel's `VERCEL_PROJECT_PRODUCTION_URL`. Without a known origin, the build intentionally omits a fabricated canonical and is noindex. Preview builds are also noindex. SEO configuration does not guarantee search rankings or indexing.
 
-Если Steam отклоняет `Cloud.ClientFileDownload`, сервер пробует получить подписанную ссылку на тот же файл через `Cloud.EnumerateUserFiles`; ссылка не передаётся браузеру. Проверяются AppID, точное имя, SHA1, размер, время изменения, допустимый HTTPS-хост и публичный IP-адрес хранилища. Если Steam не отдаёт корректные данные либо файл зашифрован/сжат неподдерживаемым образом, скачивание завершится явной ошибкой. **Не удаляйте файлы, пока не получили и не проверили резервную копию.**
+```sh
+SITE_URL=https://your-project.vercel.app npm run build:public
+node scripts/preview-public.mjs
+```
 
-## Архитектура и источники
+The public build verification rejects local API/Steam client code in its bundle. Its CSP disallows network connections from JavaScript. The local authenticated UI is always marked noindex.
 
-Подробности HTTP API, жизненного цикла сессий и удаления описаны в [docs/architecture.md](docs/architecture.md).
+## Before making the repository public
 
-- [Steam: User Authentication and Ownership](https://partner.steamgames.com/doc/features/auth) — возможности OpenID.
-- [Steam: OAuth](https://partner.steamgames.com/doc/webapi_overview/oauth) — выдача Client ID и привязка Cloud-прав к AppId.
-- [Steam: ICloudService](https://partner.steamgames.com/doc/webapi/ICloudService) — Cloud API и обязательное завершение batch.
-- [Steam: ISteamRemoteStorage](https://partner.steamgames.com/doc/api/ISteamRemoteStorage) — SDK для игр, на который опирается исходная идея.
-- [steam-session](https://github.com/DoctorMcKay/node-steam-session) — клиентская QR-аутентификация.
-- [steam-user Cloud protobuf](https://github.com/DoctorMcKay/node-steam-user/blob/master/protobufs/steammessages_cloud.steamclient.proto) — схемы клиентских сообщений.
+Review Git history for secrets, enable private vulnerability reporting, select required CI checks and verify the static deployment. A `LICENSE` file does not itself change GitHub repository visibility.
 
-Независимый проект; не является продуктом Valve и не связан с поддержкой Steam.
-
-## Упрощённый интерфейс библиотеки
-
-Главная страница теперь показывает карточки игр с поиском, без сайдбара и общей статистики непроверенного облака. Нажатие открывает отдельный экран сохранений. Кнопка «Все игры» и история браузера возвращают к библиотеке; поиск и позиция списка сохраняются в рамках открытой страницы. Неизвестное количество файлов не считается нулём. Библиотека сама по себе не запускает чтение сохранений каждой игры.
-
-Сервер во всех путях получения списка оставляет только приложения с явно указанным PICS-типом game. DLC, саундтреки, демо и инструменты исключены. Название игры на классификацию не влияет. Если Steam не прислал тип приложения, оно не попадает в карточки, но доступно через «Открыть по ссылке или AppID». Эта форма принимает числовой AppID или HTTPS-ссылку на страницу /app/ в магазине Steam.
-
-Обложки загружаются с одного разрешённого CDN Steam, без referrer. При ошибке обложки остаётся нейтральная карточка; доступ к сохранениям от изображения не зависит. Удаление по-прежнему требует отдельного подтверждения, закрытия игры и повторной проверки файлов сервером.
+made by [@famence](https://github.com/famence)

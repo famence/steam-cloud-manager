@@ -12,6 +12,7 @@ import type { Config } from './config.js';
 import type { CloudDriver } from './steam/contracts.js';
 import { SteamCloudDriver } from './steam/steam-driver.js';
 import { SteamServiceError } from './steam/protocol.js';
+import { LibrarySummaryCache } from './library-summary.js';
 import { DemoCloudDriver } from './demo-driver.js';
 import { AppError } from './errors.js';
 import { SessionStore, randomId, type Session } from './sessions.js';
@@ -47,6 +48,7 @@ export async function buildApp(options: {
 }) {
   const { config } = options;
   const now = options.now || Date.now;
+  const summaries = new LibrarySummaryCache(now);
   const factory = options.driverFactory || (() => config.demoMode ? new DemoCloudDriver() : new SteamCloudDriver({ allowedSteamIds: config.allowedSteamIds }));
   const store = new SessionStore(factory, config.sessionTtlMs, config.maxSessions, now);
   const app = Fastify({
@@ -70,6 +72,7 @@ export async function buildApp(options: {
     reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
     reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://shared.fastly.steamstatic.com; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
     reply.header('Cache-Control', 'no-store');
+    reply.header('X-Robots-Tag', 'noindex, nofollow');
     if (config.secureCookies) reply.header('Strict-Transport-Security', 'max-age=31536000');
     if (!allowedHosts.has(request.headers.host || '')) throw new AppError(403, 'INVALID_HOST', 'Недопустимый адрес сервера.');
     if (request.url.startsWith('/api/') && request.headers['sec-fetch-site'] === 'cross-site') {
@@ -134,6 +137,10 @@ export async function buildApp(options: {
     const session = sessionOf(request);
     return { games: await session.driver.listGames() };
   });
+  app.get('/api/games/:appId/summary', async (request) => {
+    const session = sessionOf(request);
+    return summaries.get(session.driver, appIdOf(request));
+  });
   app.get('/api/games/:appId/files', async (request) => {
     const session = sessionOf(request);
     const listing = await session.driver.listFiles(appIdOf(request));
@@ -149,7 +156,7 @@ export async function buildApp(options: {
     const files = selectFiles(listing, names, revision);
     const plan = { planId: randomId(), appId, files, revision,
       totalBytes: files.reduce((sum, file) => sum + file.size, 0), expiresAt: now() + 5 * 60_000,
-      confirmation: `УДАЛИТЬ ${files.length}` };
+      confirmation: `${request.headers['accept-language']?.startsWith('ru') ? 'УДАЛИТЬ' : 'DELETE'} ${files.length}` };
     // One active review per browser session; opening a new review invalidates the old one.
     session.plans.clear(); session.plans.set(plan.planId, plan);
     const { revision: _, ...review } = plan;
@@ -170,7 +177,9 @@ export async function buildApp(options: {
       const current = await session.driver.listFiles(appId);
       const files = selectFiles(current, plan.files.map((f) => f.name), plan.revision);
       assertActive(session);
-      return await session.driver.deleteFiles(appId, files);
+      const result = await session.driver.deleteFiles(appId, files);
+      summaries.invalidate(session.driver, appId);
+      return result;
     } finally { session.busy = false; }
   });
 

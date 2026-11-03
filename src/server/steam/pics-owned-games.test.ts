@@ -20,8 +20,8 @@ const apps = {
 test('PICS returns base games without claiming unknown Cloud usage', async () => {
   const client = new FixtureClient(); client.picsCache = { ownershipModified: 1, apps };
   assert.deepEqual(await listPicsOwnedGames(client, new AbortController().signal), [
-    { appId: 255710, name: 'Cities: Skylines', fileCount: null, totalBytes: null },
-    { appId: 949230, name: 'Cities: Skylines II', fileCount: null, totalBytes: null },
+    { appId: 255710, name: 'Cities: Skylines', fileCount: null, totalBytes: null, cloudSupport: 'unknown' },
+    { appId: 949230, name: 'Cities: Skylines II', fileCount: null, totalBytes: null, cloudSupport: 'unknown' },
   ]);
 });
 test('DLC, tools, demos, soundtracks and missing types are excluded, regardless of their names', async () => {
@@ -45,11 +45,11 @@ test('type matching is exact and case-insensitive; names never determine type', 
   assert.equal(isBaseGame(undefined), false);
 });
 test('metadata filter covers remote-library path, preserves Cloud stats, sanitizes names', () => {
-  const games = [{ appId: 1, name: 'App 1', fileCount: 2, totalBytes: 100 }, { appId: 2, name: 'DLC', fileCount: 0, totalBytes: 0 }];
+  const games = [{ appId: 1, name: 'App 1', fileCount: 2, totalBytes: 100, cloudSupport: 'supported' as const }, { appId: 2, name: 'DLC', fileCount: 0, totalBytes: 0 }];
   assert.deepEqual(filterBaseGames(games, {
     '1': { appinfo: { common: { type: 'game', name: 'Game\u0000 Name' } } },
     '2': { appinfo: { common: { type: 'dlc' } } },
-  }), [{ appId: 1, name: 'Game Name', fileCount: 2, totalBytes: 100 }]);
+  }), [{ appId: 1, name: 'Game Name', fileCount: 2, totalBytes: 100, cloudSupport: 'supported' as const }]);
 });
 test('PICS waits for ownershipCached and cleans listeners', async () => {
   const client = new FixtureClient(); const pending = listPicsOwnedGames(client, new AbortController().signal, 500);

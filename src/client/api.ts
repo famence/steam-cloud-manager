@@ -1,12 +1,13 @@
 export class ApiError extends Error {
-  constructor(public status: number, message: string) { super(message); }
+  constructor(public status: number, message: string, public code = "REQUEST_FAILED") { super(message); }
 }
 
 export async function api<T>(path: string, options: { body?: unknown; csrf?: string; signal?: AbortSignal } = {}): Promise<T> {
   const response = await fetch(path, {
     method: options.body === undefined ? 'GET' : 'POST',
     credentials: 'same-origin',
-    headers: options.body === undefined ? undefined : {
+    headers: options.body === undefined ? { 'Accept-Language': document.documentElement.lang || 'en' } : {
+      'Accept-Language': document.documentElement.lang || 'en',
       'Content-Type': 'application/json',
       'x-csrf-token': options.csrf || '',
     },
@@ -16,7 +17,7 @@ export async function api<T>(path: string, options: { body?: unknown; csrf?: str
   const data = await response.json().catch(() => null);
   if (!response.ok) {
     const message = typeof data?.error === 'string' ? data.error : data?.error?.message || data?.message;
-    throw new ApiError(response.status, typeof message === 'string' ? message : `Не удалось выполнить запрос (${response.status}). Попробуйте ещё раз.`);
+    throw new ApiError(response.status, typeof message === 'string' ? message : `Request failed (${response.status}).`, typeof data?.error?.code === "string" ? data.error.code : "REQUEST_FAILED");
   }
   return data as T;
 }
@@ -24,8 +25,8 @@ export async function api<T>(path: string, options: { body?: unknown; csrf?: str
 /** Never navigate to an arbitrary URL returned by a server response. */
 export function checkedDownloadUrl(url: string): string {
   const target = new URL(url, window.location.origin);
-  if (target.origin !== window.location.origin || !target.pathname.startsWith('/api/')) {
-    throw new Error('Получен некорректный адрес скачивания.');
+  if (target.origin !== window.location.origin || target.username || target.password || !target.pathname.startsWith('/api/')) {
+    throw new ApiError(502, 'Invalid download address', 'DOWNLOAD_URL_UNSAFE');
   }
   return target.href;
 }
@@ -74,16 +75,14 @@ export async function streamToSavedFile(url: string, handle: SaveFileHandle): Pr
     const data = await response.json().catch(() => null);
     const message = data?.error?.message || data?.message;
     throw new ApiError(response.status, typeof message === 'string'
-      ? message : `Steam не отдал файл (HTTP ${response.status}).`);
+      ? message : `Download failed (HTTP ${response.status}).`, typeof data?.error?.code === 'string' ? data.error.code : 'DOWNLOAD_REJECTED');
   }
-  if (!response.body) throw new Error('Браузер не поддерживает потоковое скачивание.');
+  if (!response.body) throw new ApiError(502, 'Download stream unavailable', 'DOWNLOAD_STREAM_UNAVAILABLE');
   const writable = await handle.createWritable();
   try {
     await response.body.pipeTo(writable);
   } catch (error) {
     await writable.abort().catch(() => {});
-    throw new Error(error instanceof Error
-      ? `Скачивание прервалось: ${error.message}`
-      : 'Скачивание прервалось. Неполный файл не был сохранён.');
+    throw new ApiError(502, 'Download interrupted; incomplete file was not saved', 'DOWNLOAD_INTERRUPTED');
   }
 }

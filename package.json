@@ -3,14 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22.12" },
+  "engines": {
+    "node": ">=22.12"
+  },
   "scripts": {
     "dev": "concurrently -k -n api,web \"tsx watch src/server/index.ts\" \"vite --host 127.0.0.1\"",
     "build": "tsc --noEmit && vite build && tsc -p tsconfig.server.json",
-    "start": "node dist/server/server/index.js",
+    "start": "node scripts/start-local.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test src/server/*.test.ts src/server/steam/*.test.ts",
-    "check": "npm run typecheck && npm test && npm run build"
+    "check": "npm run typecheck && npm test && npm run build && npm run build:public",
+    "build:public": "tsc --noEmit && vite build --mode public && node --import tsx scripts/prerender.tsx && node scripts/verify-public.mjs",
+    "test:e2e": "tsc -p tests/e2e/tsconfig.json && node tests/e2e/node_modules/playwright/cli.js test --config=tests/e2e/playwright.config.ts",
+    "test:browser:install": "npm ci --prefix tests/e2e --ignore-scripts && node tests/e2e/node_modules/playwright/cli.js install chromium"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.5",
@@ -43,5 +48,11 @@
     "protobufjs": "7.6.6",
     "glob": "14.0.3",
     "minimatch": "11.0.4"
+  },
+  "license": "MIT",
+  "description": "Local-first Steam Cloud save manager with a static public website.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/famence/steam-cloud-manager.git"
   }
 }
