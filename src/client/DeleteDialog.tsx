@@ -3,9 +3,10 @@ import { AlertTriangle, Download, File, LoaderCircle, Trash2, X } from 'lucide-r
 import type { DeletePlan } from '../shared/types';
 import { basename, bytes } from './format';
 
-export default function DeleteDialog({ plan, deleting, exporting, error, onClose, onDelete, onBackup }: {
+export default function DeleteDialog({ plan, deleting, exporting, error, onClose, onDelete, onBackup, preparedExport }: {
   plan: DeletePlan; deleting: boolean; exporting: boolean; error?: string;
   onClose: () => void; onDelete: (confirmation: string) => void; onBackup: () => void;
+  preparedExport?: string | null;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [confirmation, setConfirmation] = useState('');
@@ -32,7 +33,10 @@ export default function DeleteDialog({ plan, deleting, exporting, error, onClose
     <button className="button button-secondary backup-button" onClick={onBackup} disabled={busy || expired}>
       {exporting ? <LoaderCircle className="spin" size={17} /> : <Download size={17} />} Скачать эти файлы в ZIP
     </button>
-    <p className="backup-reminder">Дождитесь окончания скачивания перед удалением.</p>
+    {preparedExport && <a className="button button-primary backup-ready-link" href={preparedExport} download><Download size={17} /> Скачать подготовленный ZIP</a>}
+    <p className="backup-reminder">{preparedExport
+      ? 'Нажмите ссылку выше. Архив начнёт скачиваться после вашего клика. Проверьте готовый файл.'
+      : 'Сначала сохраните резервную копию и проверьте её перед удалением.'}</p>
     {error && <p className="inline-error" role="alert">{error}</p>}
     <form onSubmit={event => { event.preventDefault(); if (!busy && !expired && gamesClosed && confirmation === plan.confirmation) onDelete(confirmation); }}>
       <label className="checkbox-label warning-check"><input type="checkbox" checked={gamesClosed} onChange={event => setGamesClosed(event.target.checked)} disabled={busy} />
