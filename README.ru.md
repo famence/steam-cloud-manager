@@ -18,7 +18,7 @@ Open-source веб-сервис для просмотра, скачивания 
 
 ## Развёртывание
 
-Создайте проект на Vercel из репозитория. Конфигурация — [vercel.ts](vercel.ts), без внешних серверов.
+Создайте проект на Vercel из репозитория. Конфигурация — [vercel.json](vercel.json), без внешних серверов.
 
 Нужна секретная переменная SCM_SESSION_KEY (32 случайных байта, base64url, 43 символа). Создать её можно через Node crypto.randomBytes(32).toString('base64url'); значение сохранить только в Vercel Environment Variables. SITE_URL задаёт SEO-домен. DEMO_MODE=true допустим лишь на preview. ENABLE_CLOUD_DELETE оставить пустым/false в production.
 

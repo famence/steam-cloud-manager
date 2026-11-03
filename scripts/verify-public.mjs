@@ -22,7 +22,7 @@ const js=await readFile(landingBundle[0],'utf8');
 for(const name of ['/api/auth/steam','steam-user','ClientFileDownload']) {
   assert(!js.includes(name),'SEO landing must not load the account API');
 }
-const {config}=await import('../vercel.ts');
+const config=JSON.parse(await readFile('vercel.json','utf8'));
 assert.equal(config.outputDirectory,'dist/public');
 assert(config.rewrites.some(r=>r.source==='/api/:path*'&&r.destination.startsWith('/api/index')));
 assert(config.functions['api/index.ts'].maxDuration>=120);

@@ -23,7 +23,7 @@ Steam Guard QR, game cards without DLC, search, favorites, lazy batches, grouped
 
 ## Vercel setup
 
-Connect the repository to a Vercel project (Vite framework, repository root), which reads [vercel.ts](vercel.ts). No second server is required.
+Connect the repository to a Vercel project (Vite framework, repository root), which reads [vercel.json](vercel.json). No second server is required.
 
 Configure these environment variables in Vercel:
 
