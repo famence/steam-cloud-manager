@@ -22,6 +22,8 @@
   "include": [
     "src",
     "vite.config.ts",
-    "scripts/prerender.tsx"
+    "scripts/prerender.tsx",
+    "api/**/*.ts",
+    "api/**/*.ts"
   ]
 }

@@ -35,6 +35,11 @@ for (const locale of ['en', 'ru'] as Locale[]) {
   await writeFile(`dist/public/${locale}/index.html`, html);
   if (locale === 'en') await writeFile('dist/public/index.html', html);
 }
+await mkdir('dist/public/app', {recursive:true});
+const privateHtml=await readFile('dist/public/app.html','utf8');
+if (!privateHtml.includes('noindex,nofollow')) throw new Error('Authenticated app must be noindex');
+await writeFile('dist/public/app/index.html',privateHtml);
+await rm('dist/public/app.html');
 await rm('dist/public/public.html');
 await writeFile('dist/public/robots.txt', indexable
   ? `User-agent: *\nAllow: /\nDisallow: /api/\nSitemap: ${origin}/sitemap.xml\n` : 'User-agent: *\nDisallow: /\n');
