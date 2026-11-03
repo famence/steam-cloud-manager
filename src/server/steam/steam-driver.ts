@@ -5,8 +5,8 @@ import { LoginSession, EAuthTokenPlatformType } from 'steam-session';
 import QRCode from 'qrcode';
 import type { CloudFile, CloudGame, DeleteResult, LoginInfo } from '../../shared/types.js';
 import type { CloudDriver, DriverListing } from './contracts.js';
-import { assertAppId, performDeleteBatch, readFileListing, safeInteger } from './cloud-operations.js';
-import { openStorageDownload, type DownloadResponse } from './download.js';
+import { assertAppId, performDeleteBatch, readFileListing, safeInteger, findEnumeratedDownloadUrl } from './cloud-operations.js';
+import { openStorageDownload, openSignedStorageDownload, type DownloadResponse } from './download.js';
 import { listRemoteGames } from './game-list.js';
 import { listPicsOwnedGames, type PicsClient } from './pics-owned-games.js';
 import { filterBaseGames, type PicsApp } from './game-metadata.js';
@@ -260,21 +260,39 @@ export class SteamCloudDriver implements CloudDriver {
 
   async downloadFile(appId: number, file: CloudFile) {
     assertAppId(appId);
-    const response = await this.requireRpc().call<DownloadResponse>('ClientFileDownload', { appid: appId, filename: file.name });
-    if (response.is_explicit_delete) throw new SteamServiceError('Файл был удалён. Обновите список.', 'FILES_CHANGED', 409);
-    if (response.encrypted || response.file_size !== response.raw_file_size) {
-      throw new SteamServiceError(
-        'Steam хранит этот файл в сжатом или зашифрованном формате. Его скачивание пока не поддерживается; просмотр и удаление доступны.',
-        'UNSUPPORTED_STORAGE_ENCODING', 422,
-      );
+    const rpc = this.requireRpc();
+    try {
+      const response = await rpc.call<DownloadResponse>('ClientFileDownload', {
+        appid: appId, filename: file.name,
+      });
+      if (response.is_explicit_delete) {
+        throw new SteamServiceError('Файл был удалён. Обновите список.', 'FILES_CHANGED', 409);
+      }
+      if (response.encrypted || response.file_size !== response.raw_file_size) {
+        throw new SteamServiceError(
+          'Steam вернул сжатый или зашифрованный файл — пробуем альтернативный адрес.',
+          'UNSUPPORTED_STORAGE_ENCODING', 422,
+        );
+      }
+      const sha = Buffer.isBuffer(response.sha_file) ? response.sha_file.toString('hex') : '';
+      if (response.appid !== appId || response.raw_file_size !== file.size || sha !== file.sha
+        || safeInteger(response.time_stamp, 'время изменения') !== file.modifiedAt) {
+        throw new SteamServiceError('Файл изменился. Обновите список перед скачиванием.', 'FILES_CHANGED', 409);
+      }
+      const stream = await openStorageDownload(response, file.size, file.sha, this.lifetime.signal);
+      return { stream, size: file.size };
+    } catch (error) {
+      // Steam's documented EnumerateUserFiles returns a signed download URL.
+      // Never retry on a changed file, invalid session, malformed response or
+      // integrity failure. In particular, do not bypass the SHA validation.
+      if (!(error instanceof SteamServiceError) || !new Set([
+        'STEAM_RESULT_2', 'STEAM_RESULT_20', 'STEAM_RESULT_42',
+        'UNSUPPORTED_STORAGE_ENCODING', 'UNSAFE_STORAGE_URL', 'DOWNLOAD_REJECTED',
+      ]).has(error.code)) throw error;
+      const signedUrl = await findEnumeratedDownloadUrl(rpc, appId, file);
+      const stream = await openSignedStorageDownload(signedUrl, file.size, file.sha, this.lifetime.signal);
+      return { stream, size: file.size };
     }
-    const sha = Buffer.isBuffer(response.sha_file) ? response.sha_file.toString('hex') : '';
-    if (response.appid !== appId || response.raw_file_size !== file.size || sha !== file.sha
-      || safeInteger(response.time_stamp, 'время изменения') !== file.modifiedAt) {
-      throw new SteamServiceError('Файл изменился. Обновите список перед скачиванием.', 'FILES_CHANGED', 409);
-    }
-    const stream = await openStorageDownload(response, file.size, file.sha, this.lifetime.signal);
-    return { stream, size: file.size };
   }
 
   async deleteFiles(appId: number, files: CloudFile[]): Promise<DeleteResult> {
