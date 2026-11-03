@@ -2,7 +2,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { readFile, stat } from 'node:fs/promises';
 const root = path.resolve('dist/public');
-const { config } = await import('../vercel.ts');
+const config = JSON.parse(await readFile('vercel.json', 'utf8'));
 const { handle } = await import('../src/server/vercel/handler.ts');
 const headers = Object.fromEntries(config.headers[0].headers.map(entry => [entry.key, entry.value]));
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css', '.svg': 'image/svg+xml', '.txt': 'text/plain', '.xml': 'application/xml' };
