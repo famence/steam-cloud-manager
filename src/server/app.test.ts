@@ -12,11 +12,15 @@ const file: CloudFile = { name: '%WinAppDataLocal%/Saves/Город.save', size:
 class FakeDriver implements CloudDriver {
   connected = false; closed = false; files = [{ ...file }]; change = 1;
   deleteCalls = 0; result: DeleteResult | null = null;
+  downloadError = false;
   async startLogin() { this.connected = true; }
   getLogin(): LoginInfo { return { status: this.connected ? 'connected' : 'disconnected' }; }
   async listGames() { return [{ appId: 949230, name: 'Cities: Skylines II', fileCount: this.files.length, totalBytes: this.files.reduce((n, f) => n + f.size, 0) }]; }
   async listFiles(appId: number) { return { appId, files: this.files.map((f) => ({ ...f })), changeNumber: String(this.change) }; }
-  async downloadFile() { return { stream: Readable.from(bytes), size: bytes.length }; }
+  async downloadFile() {
+    if (this.downloadError) throw new Error('simulated Steam download failure');
+    return { stream: Readable.from(bytes), size: bytes.length };
+  }
   async deleteFiles(_appId: number, files: CloudFile[]) {
     this.deleteCalls++;
     if (this.result) return this.result;
@@ -176,5 +180,20 @@ test('reconnecting Steam invalidates all prior reviews and exports, even for ide
   await user.post('/api/auth/steam', {});
   assert.equal((await user.post('/api/games/949230/delete', { planId: plan.planId, confirmation: plan.confirmation, gamesClosed: true })).statusCode, 409);
   assert.equal((await user.get(ticket.downloadUrl)).statusCode, 404);
+  assert.equal(user.driver.deleteCalls, 0);
+});
+
+test('ZIP export preparation fails visibly when Steam does not provide a downloadable file', async (t) => {
+  const { browser } = await setup(t);
+  const user = await browser();
+  await user.post('/api/auth/steam', {});
+  const listing = (await user.get('/api/games/949230/files')).json();
+  user.driver.downloadError = true;
+  const result = await user.post('/api/games/949230/exports', {
+    names: [file.name], revision: listing.revision,
+  });
+  assert.equal(result.statusCode, 502);
+  assert.equal(typeof result.json().error.message, 'string');
+  assert.equal(result.json().downloadUrl, undefined);
   assert.equal(user.driver.deleteCalls, 0);
 });
