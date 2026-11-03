@@ -33,12 +33,12 @@
   },
   "devDependencies": {
     "@types/archiver": "8.0.0",
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.6.6",
     "@types/qrcode": "^1.5.5",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "6.2.1",
-    "concurrently": "^9.2.0",
+    "concurrently": "^10.0.6",
     "tsx": "^4.20.0",
     "typescript": "7.0.2",
     "vite": "8.3.5"
