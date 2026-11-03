@@ -151,8 +151,30 @@ export async function openStorageDownload(
   expectedSha: string,
   sessionSignal: AbortSignal,
 ): Promise<Readable> {
-  const url = storageUrl(response);
-  const headers = storageHeaders(response.request_headers);
+  return openVerifiedStorageRequest(
+    storageUrl(response), storageHeaders(response.request_headers),
+    expectedSize, expectedSha, sessionSignal,
+  );
+}
+
+/** A signed URL from Steam's EnumerateUserFiles is never sent to the browser. */
+export async function openSignedStorageDownload(
+  signedUrl: string,
+  expectedSize: number,
+  expectedSha: string,
+  sessionSignal: AbortSignal,
+): Promise<Readable> {
+  let url: URL;
+  try { url = new URL(signedUrl); }
+  catch { throw new SteamServiceError('Steam вернул некорректную ссылку на файл.', 'UNSAFE_STORAGE_URL'); }
+  validateStorageUrl(url);
+  return openVerifiedStorageRequest(url, { 'accept-encoding': 'identity' }, expectedSize, expectedSha, sessionSignal);
+}
+
+async function openVerifiedStorageRequest(
+  url: URL, headers: Record<string, string>, expectedSize: number,
+  expectedSha: string, sessionSignal: AbortSignal,
+): Promise<Readable> {
   const signal = AbortSignal.any([sessionSignal, AbortSignal.timeout(30 * 60_000)]);
   if (signal.aborted) throw new SteamServiceError('Сессия завершена.', 'NOT_CONNECTED', 401);
 
