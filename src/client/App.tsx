@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, ChevronDown, Cloud, Download, File, Gamepad2, LoaderCircle, LogOut, RefreshCw, Search, ShieldCheck, Trash2, X } from 'lucide-react';
 import type { CloudGame, DeletePlan, DeleteResult, FileListing, SessionInfo } from '../shared/types';
-import { api, ApiError, startDownload } from './api';
+import { api, ApiError, startDownload, checkedDownloadUrl, chooseSaveDestination, streamToSavedFile, isCancelledSave } from './api';
 import { basename, bytes, date, integer } from './format';
 import DeleteDialog from './DeleteDialog';
 import { parseAppId, fileCountLabel } from './library';
@@ -86,6 +86,7 @@ export default function App() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [action, setAction] = useState<'plan' | 'export' | 'delete' | null>(null);
   const [plan, setPlan] = useState<DeletePlan | null>(null);
+  const [preparedExport, setPreparedExport] = useState<string | null>(null);
   const sessionRequest = useRef<Promise<void> | null>(null);
   const gamesRequest = useRef(0);
   const selectionCheckbox = useRef<HTMLInputElement>(null);
@@ -123,7 +124,7 @@ export default function App() {
   }, [session?.login.status]);
 
   const resetFiles = useCallback(() => {
-    setListing(null); setFilesError(null); setSelection(new Set()); setPlan(null); setNotice(null); setQuery(''); setPage(0);
+    setListing(null); setFilesError(null); setSelection(new Set()); setPlan(null); setPreparedExport(null); setNotice(null); setQuery(''); setPage(0);
   }, []);
   const navigate = useCallback((id: number | null) => {
     if (busyRef.current) return;
@@ -236,29 +237,64 @@ export default function App() {
     } catch (error) { handleError(error); }
     finally { setSessionLoading(false); }
   };
-  const toggleFile = (name: string) => setSelection(previous => {
+  const toggleFile = (name: string) => { setPreparedExport(null); setSelection(previous => {
     const next = new Set(previous);
     if (next.has(name)) next.delete(name); else if (next.size < BATCH_LIMIT) next.add(name);
     return next;
-  });
-  const togglePage = () => setSelection(previous => {
+  }); };
+  const togglePage = () => { setPreparedExport(null); setSelection(previous => {
     const next = new Set(previous);
     for (const file of pageFiles) { if (allOnPage) next.delete(file.name); else if (next.size < BATCH_LIMIT) next.add(file.name); }
     return next;
-  });
+  }); };
   const exportFiles = async (files = selectedFiles) => {
     if (!session || !listing || !files.length || action) return;
+    // Chromium: choose a destination while the user click is still active.
+    // Downloading afterwards via fetch + WritableStream reports errors and
+    // does not buffer a multi-gigabyte ZIP in JavaScript memory.
+    const filename = `steam-cloud-${listing.appId}.zip`;
+    const picker = chooseSaveDestination(filename);
+    setAction('export'); setNotice(null); setPreparedExport(null);
+    try {
+      const handle = picker ? await picker : null;
+      const result = await api<{ downloadUrl: string }>(`/api/games/${listing.appId}/exports`, {
+        body: { names: files.map(file => file.name), revision: listing.revision },
+        csrf: session.csrfToken,
+      });
+      const downloadUrl = checkedDownloadUrl(result.downloadUrl);
+      if (handle) {
+        await streamToSavedFile(downloadUrl, handle);
+        setNotice({ kind: 'success', message: 'ZIP сохранён на диск. Проверьте архив перед удалением сохранений.' });
+      } else {
+        // Safari/Firefox: a real user click on a visible download link is
+        // reliable, unlike a synthetic anchor.click() after an awaited POST.
+        setPreparedExport(downloadUrl);
+        setNotice({ kind: 'info', message: 'Архив подготовлен. Нажмите «Скачать ZIP» по появившейся ссылке. Ссылка действует пять минут и используется один раз.' });
+      }
+    } catch (error) {
+      if (!isCancelledSave(error)) handleError(error);
+    } finally { setAction(null); }
+  };
+  const downloadSingleFile = async (file: { name: string }) => {
+    if (!listing || action) return;
+    const url = `/api/games/${listing.appId}/download?name=${encodeURIComponent(file.name)}`;
+    const picker = chooseSaveDestination(basename(file.name));
+    if (!picker) {
+      // Direct user-gesture navigation for browsers without file picker.
+      try { startDownload(url); } catch (error) { handleError(error); }
+      return;
+    }
     setAction('export'); setNotice(null);
     try {
-      const result = await api<{ downloadUrl: string }>(`/api/games/${listing.appId}/exports`, { body: { names: files.map(file => file.name), revision: listing.revision }, csrf: session.csrfToken });
-      startDownload(result.downloadUrl);
-      setNotice({ kind: 'info', message: 'Скачивание передано браузеру. Дождитесь его завершения перед удалением.' });
-    } catch (error) { handleError(error); }
-    finally { setAction(null); }
+      await streamToSavedFile(url, await picker);
+      setNotice({ kind: 'success', message: 'Файл сохранён на диск. Проверьте его перед удалением из Steam Cloud.' });
+    } catch (error) {
+      if (!isCancelledSave(error)) handleError(error);
+    } finally { setAction(null); }
   };
   const prepareDelete = async () => {
     if (!session || !listing || !selectedFiles.length || action) return;
-    setAction('plan'); setNotice(null);
+    setAction('plan'); setNotice(null); setPreparedExport(null);
     try { setPlan(await api<DeletePlan>(`/api/games/${listing.appId}/delete-plan`, { body: { names: selectedFiles.map(file => file.name), revision: listing.revision }, csrf: session.csrfToken })); }
     catch (error) { handleError(error); }
     finally { setAction(null); }
@@ -289,6 +325,7 @@ export default function App() {
     <main id="main-content" tabIndex={-1} className={`main-content${selectedFiles.length ? ' has-selection' : ''}`}>
       {session.mode === 'demo' && <p className="demo-note">Демо-режим · Все сохранения вымышленные</p>}
       {notice && <NoticeBox notice={notice} onClose={() => setNotice(null)} />}
+      {!plan && preparedExport && <p className="download-ready"><a className="button button-primary" href={preparedExport} download><Download size={17} />Скачать подготовленный ZIP</a><span>Одноразовая ссылка · 5 минут</span></p>}
       {selectedId === null ? <>
         <div className="page-heading"><div><span className="eyebrow">ВАША БИБЛИОТЕКА</span><h1 ref={heading} tabIndex={-1}>Выберите игру</h1><p>А дальше — только её сохранения.</p></div><button className="icon-button refresh-library" title="Обновить игры" aria-label="Обновить игры" onClick={() => void loadGames()} disabled={gamesLoading}><RefreshCw size={19} className={gamesLoading ? 'spin' : ''} /></button></div>
         <div className="library-toolbar"><label className="search-field"><Search size={20} /><input aria-label="Найти игру" placeholder="Найти игру" value={gameQuery} onChange={event => { setGameQuery(event.target.value); setGameLimit(GAME_PAGE_SIZE); }} />{gameQuery && <button className="icon-button" onClick={() => { setGameQuery(''); setGameLimit(GAME_PAGE_SIZE); }} aria-label="Очистить поиск игр"><X size={17} /></button>}</label><span className="library-count">{gamesLoading && !games.length ? 'Загрузка…' : `${integer(visibleGames.length)} игр`}</span></div>
@@ -315,7 +352,7 @@ export default function App() {
               <div className="file-list"><table><thead><tr><th className="check-cell"><input ref={selectionCheckbox} type="checkbox" aria-label="Выбрать файлы на странице" checked={allOnPage} onChange={togglePage} disabled={!!action || (selection.size >= BATCH_LIMIT && !someOnPage)} /></th><th>Файл</th><th className="size-cell">Размер</th><th className="date-cell">Изменён</th><th className="download-cell"><span className="sr-only">Скачать</span></th></tr></thead><tbody>{pageFiles.map((file, index) => <tr key={file.name} className={selection.has(file.name) ? 'row-selected' : ''}>
                 <td className="check-cell"><input type="checkbox" id={`file-${index}`} aria-label={`Выбрать ${file.name}`} checked={selection.has(file.name)} onChange={() => toggleFile(file.name)} disabled={!!action || (!selection.has(file.name) && selection.size >= BATCH_LIMIT)} /></td>
                 <td><label className="file-name" htmlFor={`file-${index}`}><File size={20} strokeWidth={1.6} /><span><span className="filename-text" title={file.name}>{basename(file.name)}</span><span className="mobile-file-meta">{bytes(file.size)} · {date(file.modifiedAt)}</span></span></label></td>
-                <td className="size-cell">{bytes(file.size)}</td><td className="date-cell">{date(file.modifiedAt)}</td><td className="download-cell"><button className="icon-button" aria-label={`Скачать ${file.name}`} title="Скачать файл" disabled={!!action} onClick={() => { try { startDownload(`/api/games/${listing.appId}/download?name=${encodeURIComponent(file.name)}`); } catch (error) { handleError(error); } }}><Download size={17} /></button></td>
+                <td className="size-cell">{bytes(file.size)}</td><td className="date-cell">{date(file.modifiedAt)}</td><td className="download-cell"><button className="icon-button" aria-label={`Скачать ${file.name}`} title="Скачать файл" disabled={!!action} onClick={() => void downloadSingleFile(file)}><Download size={17} /></button></td>
               </tr>)}</tbody></table></div>
               <div className="file-list-footer"><button className="text-button" disabled={!!action} onClick={() => setSelection(new Set(sortedFiles.slice(0, BATCH_LIMIT).map(file => file.name)))}>{sortedFiles.length > BATCH_LIMIT ? `Выбрать первые ${BATCH_LIMIT}` : 'Выбрать все найденные'}</button>{sortedFiles.length > PAGE_SIZE && <div className="pagination"><button className="icon-button" aria-label="Предыдущая страница" disabled={safePage === 0} onClick={() => setPage(value => value - 1)}><ArrowLeft size={16} /></button><span>{safePage + 1} / {Math.ceil(sortedFiles.length / PAGE_SIZE)}</span><button className="icon-button" aria-label="Следующая страница" disabled={(safePage + 1) * PAGE_SIZE >= sortedFiles.length} onClick={() => setPage(value => value + 1)}><ArrowRight size={16} /></button></div>}</div>
             </> : <div className="empty-state compact"><h2>Ничего не нашлось</h2><button className="text-button" onClick={() => setQuery('')}>Сбросить поиск</button></div>}
@@ -325,6 +362,6 @@ export default function App() {
       </>}
     </main>
     <footer className="app-footer"><Cloud size={14} /><span>Личный инструмент для Steam Cloud</span></footer>
-    {plan && <DeleteDialog key={plan.planId} plan={plan} error={notice?.kind === 'error' ? notice.message : undefined} deleting={action === 'delete'} exporting={action === 'export'} onClose={() => { if (!action) setPlan(null); }} onDelete={value => void deleteFiles(value)} onBackup={() => void exportFiles(plan.files)} />}
+    {plan && <DeleteDialog key={plan.planId} plan={plan} error={notice?.kind === 'error' ? notice.message : undefined} deleting={action === 'delete'} exporting={action === 'export'} onClose={() => { if (!action) setPlan(null); }} onDelete={value => void deleteFiles(value)} onBackup={() => void exportFiles(plan.files)} preparedExport={preparedExport} />}
   </div>;
 }
