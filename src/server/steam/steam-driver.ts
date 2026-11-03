@@ -9,6 +9,7 @@ import { assertAppId, performDeleteBatch, readFileListing, safeInteger } from '.
 import { openStorageDownload, type DownloadResponse } from './download.js';
 import { listRemoteGames } from './game-list.js';
 import { listPicsOwnedGames, type PicsClient } from './pics-owned-games.js';
+import { filterBaseGames, type PicsApp } from './game-metadata.js';
 import { SteamRpcTransport, SteamServiceError, safeSteamError, type SteamWireClient } from './protocol.js';
 
 const require = createRequire(import.meta.url);
@@ -19,7 +20,7 @@ interface SteamClient extends SteamWireClient, PicsClient, EventEmitter {
   logOff(): void;
   getProductInfo(
     apps: number[], packages: number[], includeTokens: boolean,
-    callback: (error: Error | null, apps: Record<string, { appinfo?: { common?: { name?: string } } }>) => void,
+    callback: (error: Error | null, apps: Record<string, PicsApp>) => void,
   ): void;
   _logOnDetails?: { access_token?: string };
   _loginSession?: { refreshToken: string; accessToken: string; cancelLoginAttempt(): void };
@@ -223,40 +224,33 @@ export class SteamCloudDriver implements CloudDriver {
       return listPicsOwnedGames(client, this.lifetime.signal);
     }
 
-    // When the legacy Cloud inventory RPC works, resolve names through PICS.
-    // Fallback owned-library games already have titles from Player.GetOwnedGames.
-    if (games.length && games.every(game => game.fileCount !== null)) {
-      const names = await this.gameNames(games.map(game => game.appId));
-      for (const game of games) game.name = names.get(game.appId) ?? game.name;
-    }
-    return games;
+    // PICS classifies real games, unlike a Steam license's list of all apps.
+    return filterBaseGames(games, await this.gameMetadata(games.map(game => game.appId)));
   }
 
-  private async gameNames(appIds: number[]): Promise<Map<number, string>> {
+  private async gameMetadata(appIds: number[]): Promise<Record<string, PicsApp>> {
     const client = this.client;
-    if (!client) return new Map();
-    return await new Promise(resolve => {
+    if (!client) return {};
+    const cached = { ...client.picsCache?.apps };
+    const missing = appIds.filter(id => !cached[id]?.appinfo?.common?.type);
+    if (!missing.length) return cached;
+    const signal = this.lifetime.signal;
+    return new Promise(resolve => {
       let done = false;
-      const finish = (names: Map<number, string>) => {
+      const finish = (apps: Record<string, PicsApp> = {}) => {
         if (done) return;
         done = true;
         clearTimeout(timer);
-        this.lifetime.signal.removeEventListener('abort', cancel);
-        resolve(names);
+        signal.removeEventListener('abort', cancel);
+        resolve({ ...cached, ...apps });
       };
-      const cancel = () => finish(new Map());
+      const cancel = () => finish();
       const timer = setTimeout(cancel, 10_000);
-      this.lifetime.signal.addEventListener('abort', cancel, { once: true });
+      signal.addEventListener('abort', cancel, { once: true });
+      if (signal.aborted) { cancel(); return; }
       try {
-        client.getProductInfo(appIds, [], true, (error, apps) => {
-          const names = new Map<number, string>();
-          if (!error && apps) for (const id of appIds) {
-            const name = apps[id]?.appinfo?.common?.name;
-            if (typeof name === 'string' && name.trim()) names.set(id, displayName(name));
-          }
-          finish(names);
-        });
-      } catch { finish(new Map()); }
+        client.getProductInfo(missing, [], true, (error, apps) => finish(!error && apps ? apps : {}));
+      } catch { finish(); }
     });
   }
 

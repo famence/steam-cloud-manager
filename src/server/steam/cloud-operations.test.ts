@@ -137,7 +137,7 @@ test('systemic failure skips remaining deletes but still finalizes and verifies 
 
 test('EResult 2 in GetAppFileChangelist falls back to paginated user files without losing hashes', async () => {
   const methods: CloudMethod[] = [];
-  const rpc: RpcCaller = { async call<T>(method, payload): Promise<T> {
+  const rpc: RpcCaller = { async call<T>(method: CloudMethod, payload: object): Promise<T> {
     methods.push(method);
     if (method === 'GetAppFileChangelist') {
       throw new SteamServiceError('generic fail', 'STEAM_RESULT_2', 502, method);
@@ -162,7 +162,7 @@ test('EResult 2 in GetAppFileChangelist falls back to paginated user files witho
 
 test('paginated user-file enumeration traverses more than 500 files', async () => {
   const calls: number[] = [];
-  const rpc: RpcCaller = { async call<T>(method, payload): Promise<T> {
+  const rpc: RpcCaller = { async call<T>(method: CloudMethod, payload: object): Promise<T> {
     assert.equal(method, 'EnumerateUserFiles');
     const start = (payload as { start_index: number }).start_index;
     calls.push(start);
@@ -196,7 +196,7 @@ test('read-only enumeration rejects missing hashes and inconsistent pagination',
 
 test('authentication and transport failures never trigger unverified listing fallbacks', async () => {
   const methods: CloudMethod[] = [];
-  const rpc: RpcCaller = { async call<T>(method): Promise<T> {
+  const rpc: RpcCaller = { async call<T>(method: CloudMethod): Promise<T> {
     methods.push(method);
     throw new SteamServiceError('no access', 'STEAM_RESULT_15', 502, method);
   }};

@@ -68,7 +68,7 @@ export async function buildApp(options: {
     reply.header('Referrer-Policy', 'no-referrer');
     reply.header('X-Frame-Options', 'DENY');
     reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-    reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+    reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://shared.fastly.steamstatic.com; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
     reply.header('Cache-Control', 'no-store');
     if (config.secureCookies) reply.header('Strict-Transport-Security', 'max-age=31536000');
     if (!allowedHosts.has(request.headers.host || '')) throw new AppError(403, 'INVALID_HOST', 'Недопустимый адрес сервера.');
