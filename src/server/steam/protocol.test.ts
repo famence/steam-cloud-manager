@@ -138,3 +138,36 @@ test('Steam generic failure names the read method without claiming a delete happ
     return true;
   });
 });
+
+test('Cloud.EnumerateUserFiles request and response preserve paginated names and SHA metadata', async () => {
+  const client: SteamWireClient = {
+    steamID,
+    _send(header, body, callback) {
+      assert.equal(header.proto.target_job_name, 'Cloud.EnumerateUserFiles#1');
+      const request = schema.CCloud_EnumerateUserFiles_Request.decode(body);
+      assert.equal(request.appid, 949230);
+      assert.equal(request.extended_details, true);
+      assert.equal(request.start_index, 500);
+      assert.equal(request.count, 500);
+      const response = schema.CCloud_EnumerateUserFiles_Response.fromObject({
+        total_files: 501,
+        files: [{
+          appid: 949230,
+          filename: '%WinAppDataLocal%Cities/save.cok',
+          timestamp: '1700000000',
+          file_size: 1234,
+          file_sha: 'ab'.repeat(20),
+        }],
+      });
+      callback(Buffer.from(schema.CCloud_EnumerateUserFiles_Response.encode(response).finish()),
+        { proto: { eresult: 1 } });
+    },
+  };
+  const rpc = new SteamRpcTransport(client, new AbortController().signal);
+  const response = await rpc.call<{ total_files: number; files: { filename: string; file_sha: string; timestamp: string }[] }>(
+    'EnumerateUserFiles', { appid: 949230, extended_details: true, start_index: 500, count: 500 },
+  );
+  assert.equal(response.total_files, 501);
+  assert.equal(response.files[0].timestamp, '1700000000');
+  assert.equal(response.files[0].file_sha, 'ab'.repeat(20));
+});
