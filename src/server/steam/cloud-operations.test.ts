@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeListing, performDeleteBatch, type ChangelistResponse } from './cloud-operations.js';
+import { normalizeListing, performDeleteBatch, readFileListing, readEnumeratedFileListing, type ChangelistResponse } from './cloud-operations.js';
 import type { CloudFile } from '../../shared/types.js';
 import { SteamServiceError, type CloudMethod, type RpcCaller } from './protocol.js';
 
@@ -133,4 +133,73 @@ test('systemic failure skips remaining deletes but still finalizes and verifies 
     assert.equal(result.failed[0].message, 'Steam недоступен.');
     assert.match(result.failed[1].message, /не отправлялся на удаление/);
   }
+});
+
+test('EResult 2 in GetAppFileChangelist falls back to paginated user files without losing hashes', async () => {
+  const methods: CloudMethod[] = [];
+  const rpc: RpcCaller = { async call<T>(method, payload): Promise<T> {
+    methods.push(method);
+    if (method === 'GetAppFileChangelist') {
+      throw new SteamServiceError('generic fail', 'STEAM_RESULT_2', 502, method);
+    }
+    assert.equal(method, 'EnumerateUserFiles');
+    assert.deepEqual(payload, { appid: appId, extended_details: true, start_index: 0, count: 500 });
+    return {
+      total_files: 2,
+      files: [
+        { appid: appId, filename: first.name, timestamp: String(first.modifiedAt),
+          file_size: first.size, file_sha: first.sha.toUpperCase() },
+        { appid: appId, filename: second.name, timestamp: String(second.modifiedAt),
+          file_size: second.size, file_sha: second.sha },
+      ],
+    } as T;
+  }};
+  assert.deepEqual(await readFileListing(rpc, appId), {
+    appId, changeNumber: 'enumerated', files: [first, second],
+  });
+  assert.deepEqual(methods, ['GetAppFileChangelist', 'EnumerateUserFiles']);
+});
+
+test('paginated user-file enumeration traverses more than 500 files', async () => {
+  const calls: number[] = [];
+  const rpc: RpcCaller = { async call<T>(method, payload): Promise<T> {
+    assert.equal(method, 'EnumerateUserFiles');
+    const start = (payload as { start_index: number }).start_index;
+    calls.push(start);
+    const count = Math.min(500, 507 - start);
+    return {
+      total_files: 507,
+      files: Array.from({ length: count }, (_, index) => ({
+        appid: appId, filename: `save-${start + index}.cok`,
+        timestamp: String(first.modifiedAt),
+        file_size: 42, file_sha: first.sha,
+      })),
+    } as T;
+  }};
+  const result = await readEnumeratedFileListing(rpc, appId);
+  assert.equal(result.files.length, 507);
+  assert.deepEqual(calls, [0, 500]);
+});
+
+test('read-only enumeration rejects missing hashes and inconsistent pagination', async () => {
+  for (const response of [
+    { total_files: 1, files: [{ appid: appId, filename: 'save.cok',
+      timestamp: String(first.modifiedAt), file_size: 1, file_sha: '' }] },
+    { total_files: 10, files: [] },
+    { total_files: 1, files: [{ appid: appId + 1, filename: 'save.cok',
+      timestamp: String(first.modifiedAt), file_size: 1, file_sha: first.sha }] },
+  ]) {
+    const rpc: RpcCaller = { async call<T>(): Promise<T> { return response as T; } };
+    await assert.rejects(readEnumeratedFileListing(rpc, appId), SteamServiceError);
+  }
+});
+
+test('authentication and transport failures never trigger unverified listing fallbacks', async () => {
+  const methods: CloudMethod[] = [];
+  const rpc: RpcCaller = { async call<T>(method): Promise<T> {
+    methods.push(method);
+    throw new SteamServiceError('no access', 'STEAM_RESULT_15', 502, method);
+  }};
+  await assert.rejects(readFileListing(rpc, appId), { code: 'STEAM_RESULT_15' });
+  assert.deepEqual(methods, ['GetAppFileChangelist']);
 });
