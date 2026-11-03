@@ -78,12 +78,76 @@ export function normalizeListing(appId: number, response: ChangelistResponse): D
   return { appId, files, changeNumber: response.current_change_number };
 }
 
+interface EnumeratedCloudFile {
+  appid: number;
+  filename: string;
+  timestamp: string;
+  file_size: number;
+  file_sha: string;
+}
+interface EnumerateUserFilesResponse {
+  total_files: number;
+  files: EnumeratedCloudFile[];
+}
+
+export async function readEnumeratedFileListing(rpc: RpcCaller, appId: number): Promise<DriverListing> {
+  assertAppId(appId);
+  const maxFiles = 100_000;
+  const pageSize = 500;
+  const files: CloudFile[] = [];
+  const seen = new Set<string>();
+  let totalFiles: number | null = null;
+
+  while (totalFiles === null || files.length < totalFiles) {
+    const response = await rpc.call<EnumerateUserFilesResponse>('EnumerateUserFiles', {
+      appid: appId,
+      extended_details: true,
+      start_index: files.length,
+      count: pageSize,
+    });
+    if (!response || !Array.isArray(response.files) || response.files.length > pageSize) {
+      throw new SteamServiceError('Steam вернул некорректную страницу файлов.', 'INVALID_STEAM_RESPONSE');
+    }
+    const count = safeInteger(response.total_files, 'количество файлов');
+    if (count > maxFiles || (totalFiles !== null && count !== totalFiles) || files.length + response.files.length > count
+      || (response.files.length === 0 && files.length < count)) {
+      throw new SteamServiceError('Steam не вернул полный список файлов.', 'INCOMPLETE_LISTING');
+    }
+    totalFiles = count;
+    for (const item of response.files) {
+      if (!item || (item.appid !== 0 && item.appid !== appId) || typeof item.filename !== 'string'
+        || !item.filename || /[\u0000-\u001f\u007f]/u.test(item.filename)
+        || Buffer.byteLength(item.filename) > 4096 || seen.has(item.filename)
+        || typeof item.file_sha !== 'string' || !/^[0-9a-f]{40}$/i.test(item.file_sha)) {
+        throw new SteamServiceError('Steam вернул некорректные сведения о файле.', 'INVALID_STEAM_RESPONSE');
+      }
+      const size = safeInteger(item.file_size);
+      const modifiedAt = safeInteger(item.timestamp, 'время изменения');
+      if (modifiedAt > 8.64e12) {
+        throw new SteamServiceError('Steam вернул некорректное время изменения.', 'INVALID_STEAM_RESPONSE');
+      }
+      seen.add(item.filename);
+      files.push({ name: item.filename, sha: item.file_sha.toLowerCase(), size, modifiedAt });
+    }
+  }
+  // Steam's UserFiles endpoint has no changelist number. The HTTP revision
+  // hashes file names, SHA, sizes and timestamps and revalidates before deletion.
+  return { appId, changeNumber: 'enumerated', files };
+}
+
+const canFallbackToEnumerated = new Set(['STEAM_RESULT_2', 'STEAM_RESULT_20', 'STEAM_RESULT_42']);
+
 export async function readFileListing(rpc: RpcCaller, appId: number): Promise<DriverListing> {
   assertAppId(appId);
-  const response = await rpc.call<ChangelistResponse>('GetAppFileChangelist', {
-    appid: appId, synced_change_number: '0',
-  });
-  return normalizeListing(appId, response);
+  try {
+    const response = await rpc.call<ChangelistResponse>('GetAppFileChangelist', {
+      appid: appId, synced_change_number: '0',
+    });
+    return normalizeListing(appId, response);
+  } catch (error) {
+    if (!(error instanceof SteamServiceError) || !canFallbackToEnumerated.has(error.code)) throw error;
+    return readEnumeratedFileListing(rpc, appId);
+  }
 }
 
 // Stop the batch after a session/transport/rate-limit failure. Retrying every remaining
