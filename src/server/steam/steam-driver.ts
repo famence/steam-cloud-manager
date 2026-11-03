@@ -8,11 +8,12 @@ import type { CloudDriver, DriverListing } from './contracts.js';
 import { assertAppId, performDeleteBatch, readFileListing, safeInteger } from './cloud-operations.js';
 import { openStorageDownload, type DownloadResponse } from './download.js';
 import { listRemoteGames } from './game-list.js';
+import { listPicsOwnedGames, type PicsClient } from './pics-owned-games.js';
 import { SteamRpcTransport, SteamServiceError, safeSteamError, type SteamWireClient } from './protocol.js';
 
 const require = createRequire(import.meta.url);
 
-interface SteamClient extends SteamWireClient, EventEmitter {
+interface SteamClient extends SteamWireClient, PicsClient, EventEmitter {
   accountInfo?: { name?: string } | null;
   logOn(details: { refreshToken: string; machineName: string; logonID: number }): void;
   logOff(): void;
@@ -155,7 +156,8 @@ export class SteamCloudDriver implements CloudDriver {
       }
       const client = new SteamUser({
         dataDirectory: null, autoRelogin: false, renewRefreshTokens: false,
-        enablePicsCache: false, protocol: connectionProtocol.WebSocket,
+        enablePicsCache: true, changelistUpdateInterval: 0,
+        protocol: connectionProtocol.WebSocket,
         ...(this.httpProxy ? { httpProxy: this.httpProxy } : {}),
       });
       this.client = client;
@@ -201,7 +203,18 @@ export class SteamCloudDriver implements CloudDriver {
   async listGames(): Promise<CloudGame[]> {
     const rpc = this.requireRpc();
     const steamId = this.client?.steamID?.getSteamID64() ?? '';
-    const games = await listRemoteGames(rpc, steamId);
+    let games: CloudGame[];
+    try {
+      games = await listRemoteGames(rpc, steamId);
+    } catch (error) {
+      // Steam can reject both old Cloud app enumeration and Player.GetOwnedGames.
+      // PICS uses license/package messages instead of those unified RPCs.
+      // Never report a fabricated zero Cloud size from a plain owned-game list.
+      if (!(error instanceof SteamServiceError) || error.code !== 'GAME_LIST_UNAVAILABLE') throw error;
+      const client = this.client;
+      if (!client) throw new SteamServiceError('Сессия Steam завершена.', 'NOT_CONNECTED', 401);
+      return listPicsOwnedGames(client, this.lifetime.signal);
+    }
 
     // When the legacy Cloud inventory RPC works, resolve names through PICS.
     // Fallback owned-library games already have titles from Player.GetOwnedGames.
