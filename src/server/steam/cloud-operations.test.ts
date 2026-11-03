@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeListing, performDeleteBatch, readFileListing, readEnumeratedFileListing, type ChangelistResponse } from './cloud-operations.js';
+import { normalizeListing, performDeleteBatch, readFileListing, readEnumeratedFileListing, findEnumeratedDownloadUrl, type ChangelistResponse } from './cloud-operations.js';
 import type { CloudFile } from '../../shared/types.js';
 import { SteamServiceError, type CloudMethod, type RpcCaller } from './protocol.js';
 
@@ -202,4 +202,45 @@ test('authentication and transport failures never trigger unverified listing fal
   }};
   await assert.rejects(readFileListing(rpc, appId), { code: 'STEAM_RESULT_15' });
   assert.deepEqual(methods, ['GetAppFileChangelist']);
+});
+
+test('signed download URL lookup validates the same file hash and metadata', async () => {
+  const methods: CloudMethod[] = [];
+  const rpc: RpcCaller = {
+    async call<T>(method: CloudMethod, payload: object): Promise<T> {
+      methods.push(method);
+      assert.equal(method, 'EnumerateUserFiles');
+      assert.equal((payload as { appid: number }).appid, appId);
+      return {
+        total_files: 2, files: [
+          { appid: appId, filename: first.name, file_sha: first.sha,
+            timestamp: String(first.modifiedAt), file_size: first.size,
+            url: 'https://cloud-3.steamusercontent.com/object?signature=secret' },
+          { appid: appId, filename: second.name, file_sha: second.sha,
+            timestamp: String(second.modifiedAt), file_size: second.size,
+            url: 'https://cloud-3.steamusercontent.com/other?signature=secret' },
+        ],
+      } as T;
+    },
+  };
+  const signed = await findEnumeratedDownloadUrl(rpc, appId, first);
+  assert.match(signed, /^https:\/\/cloud-3\.steamusercontent\.com/);
+  assert.deepEqual(methods, ['EnumerateUserFiles']);
+  await assert.rejects(findEnumeratedDownloadUrl(rpc, appId, { ...first, sha: 'ff'.repeat(20) }),
+    { code: 'FILES_CHANGED' });
+});
+
+test('signed URL lookup never accepts missing, incomplete or inconsistent metadata', async () => {
+  for (const entry of [
+    { appid: appId, filename: first.name, file_sha: first.sha,
+      timestamp: String(first.modifiedAt), file_size: first.size, url: '' },
+    { appid: appId, filename: first.name, file_sha: first.sha,
+      timestamp: String(first.modifiedAt), file_size: first.size + 1,
+      url: 'https://cloud-3.steamusercontent.com/file' },
+  ]) {
+    const rpc: RpcCaller = { async call<T>(): Promise<T> {
+      return { total_files: 1, files: [entry] } as T;
+    } };
+    await assert.rejects(findEnumeratedDownloadUrl(rpc, appId, first), SteamServiceError);
+  }
 });
