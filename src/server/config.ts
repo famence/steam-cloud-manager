@@ -92,6 +92,12 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error('DEMO_MODE must be true or false');
   }
 
+  const rawMaxSessions = env.MAX_SESSIONS || env.SCM_MAX_SESSIONS;
+  const maxSessions = rawMaxSessions !== undefined && rawMaxSessions !== '' ? Number(rawMaxSessions) : 200;
+  if (!Number.isInteger(maxSessions) || maxSessions < 5 || maxSessions > 1000) {
+    throw new Error('MAX_SESSIONS must be 5..1000');
+  }
+
   return {
     host,
     port,
@@ -101,6 +107,6 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
     demoMode: env.DEMO_MODE === 'true',
     allowedSteamIds,
     sessionTtlMs: ttlMinutes * 60_000,
-    maxSessions: 25,
+    maxSessions,
   };
 }

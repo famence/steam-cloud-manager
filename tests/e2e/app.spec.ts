@@ -18,30 +18,39 @@ test.beforeEach(async ({ page }, testInfo) => {
   });
 });
 
-test.afterEach(async ({ page }) => {
-  // Hermetically destroy session so SessionStore (maxSessions: 25) never exhausts memory slots
+test.afterEach(async ({ context, page }, testInfo) => {
+  // Hermetically destroy session out-of-band so SessionStore never accumulates demo slots
   try {
-    if (page.isClosed()) return;
-    const dialog = page.locator('dialog[open]');
-    if (await dialog.isVisible({ timeout: 200 }).catch(() => false)) {
-      await page.keyboard.press('Escape').catch(() => {});
+    if (page && !page.isClosed()) {
+      const dialog = page.locator('dialog[open]');
+      if (await dialog.isVisible({ timeout: 200 }).catch(() => false)) {
+        await page.keyboard.press('Escape').catch(() => {});
+      }
     }
-    const currentUrl = page.url();
-    if (currentUrl && currentUrl.startsWith('http')) {
-      await page.evaluate(async () => {
-        try {
-          const s = await fetch('/api/session').then(r => r.json()).catch(() => null);
-          if (s?.csrfToken) {
-            await fetch('/api/auth/logout', {
-              method: 'POST',
-              headers: {
-                'x-csrf-token': s.csrfToken,
-                'content-type': 'application/json',
-              },
-              body: '{}',
-            }).catch(() => {});
-          }
-        } catch {}
+    const cookies = await context.cookies();
+    const sessionCookie = cookies.find(c => c.name === '__Host-scm' || c.name === 'scm-session');
+    if (!sessionCookie) return;
+
+    // Use context.request which operates at network layer, bypassing in-page route mocks
+    const sessionRes = await context.request.get('/api/session', {
+      headers: { 'sec-fetch-site': 'same-origin' },
+    }).catch(() => null);
+
+    if (!sessionRes || !sessionRes.ok()) return;
+    const body = await sessionRes.json().catch(() => null);
+
+    // Only log out if currently in demo mode or connected (avoids allocating pointless next sessions)
+    if (body?.csrfToken && (body.mode === 'demo' || body.login?.status === 'connected' || body.login?.status === 'awaiting_confirmation')) {
+      const baseURL = (testInfo.project.use.baseURL as string) || process.env.BASE_URL || 'http://127.0.0.1:3110';
+      const origin = new URL(baseURL).origin;
+      await context.request.post('/api/auth/logout', {
+        headers: {
+          'origin': origin,
+          'x-csrf-token': body.csrfToken,
+          'content-type': 'application/json',
+          'sec-fetch-site': 'same-origin',
+        },
+        data: {},
       }).catch(() => {});
     }
   } catch {}

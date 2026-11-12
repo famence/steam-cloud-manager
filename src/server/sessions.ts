@@ -62,6 +62,40 @@ export class SessionStore {
     this.timer.unref();
   }
 
+  private findEvictionCandidate(): Session | undefined {
+    const nonBusy = [...this.sessions.values()].filter(
+      (s) => !s.busy && s.activeTransfers === 0,
+    );
+    if (nonBusy.length === 0) return undefined;
+
+    // Tier 1: Oldest disconnected, expired, or error sessions
+    const tier1 = nonBusy
+      .filter((s) => ['disconnected', 'expired', 'error'].includes(s.driver.getLogin().status))
+      .sort((a, b) => a.lastSeen - b.lastSeen);
+    if (tier1.length > 0) return tier1[0];
+
+    // Tier 2: Oldest idle demo sessions (stateless simulation, safe to evict LRU)
+    const tier2 = nonBusy
+      .filter((s) => s.mode === 'demo')
+      .sort((a, b) => a.lastSeen - b.lastSeen);
+    if (tier2.length > 0) return tier2[0];
+
+    // Tier 3: Oldest non-busy sessions (LRU)
+    const tier3 = nonBusy.sort((a, b) => a.lastSeen - b.lastSeen);
+    return tier3[0];
+  }
+
+  private ensureCapacity(): void {
+    this.prune();
+    while (this.sessions.size >= this.max) {
+      const candidate = this.findEvictionCandidate();
+      if (!candidate) {
+        throw new AppError(503, 'SESSION_LIMIT', 'Слишком много активных сессий. Попробуйте позже.');
+      }
+      this.destroy(candidate);
+    }
+  }
+
   create(options?: {
     mode?: 'live' | 'demo';
     steamId?: string;
@@ -70,21 +104,7 @@ export class SessionStore {
     driver?: CloudDriver;
     connectionId?: string;
   }): Session {
-    this.prune();
-    if (this.sessions.size >= this.max) {
-      const idle = [...this.sessions.values()]
-        .filter(
-          (s) =>
-            !s.busy &&
-            !s.activeTransfers &&
-            ['disconnected', 'expired', 'error'].includes(s.driver.getLogin().status),
-        )
-        .sort((a, b) => a.lastSeen - b.lastSeen)[0];
-      if (idle) this.destroy(idle);
-    }
-    if (this.sessions.size >= this.max) {
-      throw new AppError(503, 'SESSION_LIMIT', 'Слишком много активных сессий. Попробуйте позже.');
-    }
+    this.ensureCapacity();
 
     const mode = options?.mode ?? 'live';
     let driver = options?.driver;
@@ -138,6 +158,13 @@ export class SessionStore {
         session = this.sessions.get(payload.sessionId);
         if (!session) {
           // Rehydrate driver on cold instance
+          this.prune();
+          while (this.sessions.size >= this.max) {
+            const candidate = this.findEvictionCandidate();
+            if (!candidate) break;
+            this.destroy(candidate);
+          }
+
           let driver: CloudDriver;
           if (payload.mode === 'demo') {
             const demo = new DemoCloudDriver();
