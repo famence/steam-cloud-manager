@@ -1,7 +1,6 @@
 import Fastify, { LogController, type FastifyRequest, type FastifyReply } from 'fastify';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
-import fastifyStatic from '@fastify/static';
 import { ZipArchive } from 'archiver';
 import { timingSafeEqual } from 'node:crypto';
 import { resolve } from 'node:path';
@@ -668,6 +667,7 @@ export async function buildApp(options: {
   });
 
   if (options.serveStatic) {
+    const { default: fastifyStatic } = await import('@fastify/static');
     await app.register(fastifyStatic, { root: resolve('dist/client'), wildcard: false });
     app.setNotFoundHandler((request, reply) => {
       if (request.url.startsWith('/api/')) {
