@@ -12,3 +12,96 @@
 @media(max-width:600px){body{font-size:14px}.header-inner{padding:16px 19px;flex-wrap:wrap;gap:14px}.brand{font-size:15px}.header-controls{gap:5px}.header-controls select{font-size:12px;height:35px;padding:0 7px}.header-controls .icon-button{width:33px;height:35px}.main-content{padding:28px 19px 20px}.page-heading{margin-bottom:20px}h1{font-size:29px}.count-label{font-size:14px}.game-grid{grid-template-columns:1fr;gap:19px}.game-info strong{font-size:16px}.game-info small{font-size:13px}.game-info{padding:17px 18px;min-height:88px}.cover{aspect-ratio:460/215}.manual-open{margin-bottom:25px}.manual-open form{flex-wrap:wrap}.manual-open form input{flex-basis:100%}.file-heading h1{font-size:24px}.file-toolbar{flex-wrap:wrap}.file-toolbar .search-field{flex-basis:100%}.sort-select{max-width:none;width:100%;height:40px}.file-table .date-cell{display:none}.file-table .size-cell{display:none}.mobile-file-meta{display:block;font-size:11px;color:var(--muted);margin-top:6px}.file-table th,.file-table td{padding:12px 8px}.file-table .checkbox-cell{width:34px;padding-left:12px}.file-table th:last-child{width:41px}.filename strong{font-size:13px}.filename small{font-size:10px}.file-list-footer{align-items:flex-start}.bulk-actions{width:calc(100% - 26px);bottom:13px;display:flex;flex-direction:column;align-items:stretch;gap:11px;padding:13px}.bulk-summary{font-size:12px}.bulk-summary .icon-button{margin-left:auto}.bulk-buttons .button{flex:1}.main-content.has-selection{padding-bottom:145px}.app-footer{padding:24px 19px;font-size:12px}.login-card{padding:27px 23px;margin:20px auto 35px}.login-card h1{font-size:27px}.dialog{padding:22px 20px;max-height:calc(100dvh - 28px)}.dialog-top h2{font-size:21px}.dialog-actions .button{font-size:12px;padding:10px 12px}.public-main{padding:36px 20px 10px}.public-intro h1{font-size:34px}.lead{font-size:17px}.public-section{padding:25px 0;margin-top:24px}.terminal{font-size:11px;padding:14px}.security-copy{font-size:13px}}
 @media(max-width:420px){.brand{flex-basis:100%}.header-controls{width:100%;justify-content:flex-end}.header-controls:before{content:"";flex:1}.login-card{margin-top:0}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+/* --- Feature F6: Demo Mode UI & Login Card --- */
+.login-actions {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+.login-divider {
+  display: flex;
+  align-items: center;
+  margin: 14px 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+.login-divider::before,
+.login-divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid var(--line);
+}
+.login-divider span {
+  padding: 0 12px;
+}
+.button-secondary {
+  background: var(--soft);
+  border-color: var(--line);
+  color: var(--ink);
+}
+.button-secondary:hover:not(:disabled) {
+  background: var(--line);
+}
+.button-ghost {
+  background: none;
+  border-color: var(--line);
+  color: var(--muted);
+}
+.button-ghost:hover:not(:disabled) {
+  background: var(--soft);
+  color: var(--ink);
+}
+.button-sm {
+  min-height: 32px;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+.demo-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--warning-soft);
+  color: var(--warning);
+  border: 1px solid var(--warning);
+  border-radius: 9px;
+  margin-bottom: 20px;
+  font-size: 13px;
+  font-weight: 550;
+}
+.demo-banner-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.demo-badge {
+  display: inline-block;
+  background: var(--warning-soft);
+  color: var(--warning);
+  border: 1px solid var(--warning);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+/* Responsive updates for Tablet and Mobile */
+@media (max-width: 900px) {
+  .demo-badge {
+    display: none;
+  }
+}
+@media (max-width: 600px) {
+  .demo-banner {
+    flex-wrap: wrap;
+    padding: 10px 12px;
+  }
+}
+

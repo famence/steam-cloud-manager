@@ -8,8 +8,12 @@ import type { CloudGame } from '../shared/types.js';
 import { LibrarySummaryCache } from './library-summary.js';
 import { DemoCloudDriver } from './demo-driver.js';
 
-test('Steam backend is loopback-only and refuses a hosted runtime', () => {
-  assert.throws(() => readConfig({ VERCEL: '1' }));
+test('Steam backend adapts to Vercel and preserves local loopback enforcement', () => {
+  const vercelCfg = readConfig({ VERCEL: '1' });
+  assert.equal(vercelCfg.production, true);
+  assert.equal(vercelCfg.secureCookies, true);
+  assert.equal(vercelCfg.appOrigin, 'https://steam-cloud-manager.vercel.app');
+
   assert.throws(() => readConfig({ HOST: '0.0.0.0' }));
   assert.throws(() => readConfig({ HOST: '::' }));
   assert.throws(() => readConfig({ APP_ORIGIN: 'https://example.com' }));

@@ -2,10 +2,12 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
+import http from 'node:http';
 import { buildApp } from './app.js';
 import { readConfig } from './config.js';
 import type { CloudDriver } from './steam/contracts.js';
 import type { CloudFile, DeleteResult, LoginInfo } from '../shared/types.js';
+import handler, { closeAppForTesting } from '../../api/index.js';
 
 const bytes = Buffer.from('A real test fixture, not a Steam save.');
 const file: CloudFile = { name: '%WinAppDataLocal%/Saves/Город.save', size: bytes.length, modifiedAt: 1_790_000_000, sha: createHash('sha1').update(bytes).digest('hex') };
@@ -196,4 +198,238 @@ test('ZIP export preparation fails visibly when Steam does not provide a downloa
   assert.equal(typeof result.json().error.message, 'string');
   assert.equal(result.json().downloadUrl, undefined);
   assert.equal(user.driver.deleteCalls, 0);
+});
+
+test('1-click Demo Mode: POST /api/auth/demo connects isolated DemoCloudDriver, lists games, files, downloads, and deletes', async (t) => {
+  const { browser } = await setup(t);
+  const user = await browser();
+
+  const demoAuth = await user.post('/api/auth/demo', {});
+  assert.equal(demoAuth.statusCode, 200);
+  const demoBody = demoAuth.json();
+  assert.equal(demoBody.mode, 'demo');
+  assert.equal(demoBody.login.status, 'connected');
+  assert.equal(demoBody.login.user.steamId, '76561198000000000');
+  assert.equal(demoBody.login.user.displayName, 'Demo Account');
+
+  // Verify cookie was updated
+  assert.match(demoAuth.headers['set-cookie'] as string, /HttpOnly/);
+
+  // List games in demo mode
+  const gamesRes = await user.get('/api/games');
+  assert.equal(gamesRes.statusCode, 200);
+  const games = gamesRes.json().games;
+  assert.equal(games.length, 3);
+  const appIds = games.map((g: { appId: number }) => g.appId);
+  assert.ok(appIds.includes(949230)); // Cities: Skylines II
+  assert.ok(appIds.includes(1086940)); // Baldur's Gate 3
+  assert.ok(appIds.includes(1245620)); // ELDEN RING
+
+  // List files for Baldur's Gate 3
+  const filesRes = await user.get('/api/games/1086940/files');
+  assert.equal(filesRes.statusCode, 200);
+  const fileNames = filesRes.json().files.map((f: { name: string }) => f.name);
+  assert.ok(fileNames.includes('Save_01.lsv'));
+  assert.ok(fileNames.includes('Save_02.lsv'));
+
+  // Download demo save file
+  const downloadRes = await user.get('/api/games/1086940/download?name=Save_01.lsv');
+  assert.equal(downloadRes.statusCode, 200);
+  assert.match(downloadRes.headers['content-disposition'] as string, /attachment/);
+  assert.ok(downloadRes.rawPayload.length > 0);
+
+  // Create delete plan and execute deletion in demo mode
+  const planRes = await user.post('/api/games/1086940/delete-plan', {
+    names: ['Save_01.lsv'],
+    revision: filesRes.json().revision,
+  });
+  assert.equal(planRes.statusCode, 200);
+  const plan = planRes.json();
+  assert.ok(plan.planId);
+
+  const deleteRes = await user.post('/api/games/1086940/delete', {
+    planId: plan.planId,
+    confirmation: plan.confirmation,
+    gamesClosed: true,
+  });
+  assert.equal(deleteRes.statusCode, 200);
+  assert.deepEqual(deleteRes.json().deleted, ['Save_01.lsv']);
+
+  // Clean transition to Steam QR login
+  const steamSwitch = await user.post('/api/auth/steam', {});
+  assert.equal(steamSwitch.statusCode, 200);
+  assert.equal(steamSwitch.json().mode, 'live');
+
+  // Logout resets identity
+  const logout = await user.post('/api/auth/logout', {});
+  assert.equal(logout.statusCode, 200);
+  assert.equal(logout.json().mode, 'live');
+  assert.equal(logout.json().login.status, 'disconnected');
+});
+
+test('hosted security: Vercel preview/production hosts, allowed origin matching, and cross-site rejection', async (t) => {
+  const sessionKey = 'k'.repeat(43);
+  const config = readConfig({
+    VERCEL: '1',
+    APP_ORIGIN: 'https://steam-cloud-manager.vercel.app',
+    SCM_SESSION_KEY: sessionKey,
+  });
+  const app = await buildApp({ config });
+  t.after(() => app.close());
+
+  // Allowed production host
+  const prodRes = await app.inject({
+    url: '/api/session',
+    headers: { host: 'steam-cloud-manager.vercel.app' },
+  });
+  assert.equal(prodRes.statusCode, 200);
+
+  // Allowed preview host
+  const previewHost = 'steam-cloud-manager-preview-abc123.vercel.app';
+  const previewRes = await app.inject({
+    url: '/api/session',
+    headers: { host: previewHost },
+  });
+  assert.equal(previewRes.statusCode, 200);
+  const previewCookie = (previewRes.headers['set-cookie'] as string).split(';')[0];
+  const previewCsrf = previewRes.json().csrfToken as string;
+
+  // Allowed POST with preview origin matching preview host
+  const postPreview = await app.inject({
+    method: 'POST',
+    url: '/api/auth/demo',
+    headers: {
+      host: previewHost,
+      origin: `https://${previewHost}`,
+      cookie: previewCookie,
+      'x-csrf-token': previewCsrf,
+    },
+    payload: {},
+  });
+  assert.equal(postPreview.statusCode, 200);
+  assert.equal(postPreview.json().mode, 'demo');
+
+  // Disallowed attacker host
+  const evilHostRes = await app.inject({
+    url: '/api/session',
+    headers: { host: 'attacker.example' },
+  });
+  assert.equal(evilHostRes.statusCode, 403);
+  assert.equal(evilHostRes.json().error.code, 'INVALID_HOST');
+
+  // Disallowed attacker origin
+  const evilOriginRes = await app.inject({
+    method: 'POST',
+    url: '/api/auth/demo',
+    headers: {
+      host: previewHost,
+      origin: 'https://evil-attacker.example',
+      cookie: previewCookie,
+      'x-csrf-token': previewCsrf,
+    },
+    payload: {},
+  });
+  assert.equal(evilOriginRes.statusCode, 403);
+  assert.equal(evilOriginRes.json().error.code, 'INVALID_ORIGIN');
+
+  // Cross-site request rejected
+  const crossSiteRes = await app.inject({
+    url: '/api/session',
+    headers: {
+      host: 'steam-cloud-manager.vercel.app',
+      'sec-fetch-site': 'cross-site',
+    },
+  });
+  assert.equal(crossSiteRes.statusCode, 403);
+  assert.equal(crossSiteRes.json().error.code, 'CROSS_SITE_REQUEST');
+});
+
+test('stateless cold-instance session rehydration recovers demo session across independent app instances', async (t) => {
+  const sessionKey = 'c'.repeat(43);
+  const config = readConfig({
+    VERCEL: '1',
+    APP_ORIGIN: 'https://steam-cloud-manager.vercel.app',
+    SCM_SESSION_KEY: sessionKey,
+  });
+
+  // Instance 1: establishes session and logs into demo mode
+  const app1 = await buildApp({ config });
+  t.after(() => app1.close());
+
+  const init1 = await app1.inject({
+    url: '/api/session',
+    headers: { host: 'steam-cloud-manager.vercel.app' },
+  });
+  const cookie1 = (init1.headers['set-cookie'] as string).split(';')[0];
+  const csrf1 = init1.json().csrfToken as string;
+
+  const demoAuth1 = await app1.inject({
+    method: 'POST',
+    url: '/api/auth/demo',
+    headers: {
+      host: 'steam-cloud-manager.vercel.app',
+      origin: 'https://steam-cloud-manager.vercel.app',
+      cookie: cookie1,
+      'x-csrf-token': csrf1,
+    },
+    payload: {},
+  });
+  assert.equal(demoAuth1.statusCode, 200);
+  const cookieAfterDemo = (demoAuth1.headers['set-cookie'] as string).split(';')[0];
+
+  // Instance 2: completely separate cold instance with empty memory store
+  const app2 = await buildApp({ config });
+  t.after(() => app2.close());
+
+  // Instance 2 receives request with the encrypted cookie issued by Instance 1
+  const gamesCold = await app2.inject({
+    url: '/api/games',
+    headers: {
+      host: 'steam-cloud-manager.vercel.app',
+      cookie: cookieAfterDemo,
+    },
+  });
+  assert.equal(gamesCold.statusCode, 200);
+  assert.equal(gamesCold.json().games.length, 3);
+
+  // Instance 2 session check confirms connected demo mode
+  const sessionCold = await app2.inject({
+    url: '/api/session',
+    headers: {
+      host: 'steam-cloud-manager.vercel.app',
+      cookie: cookieAfterDemo,
+    },
+  });
+  assert.equal(sessionCold.statusCode, 200);
+  assert.equal(sessionCold.json().mode, 'demo');
+  assert.equal(sessionCold.json().login.status, 'connected');
+  assert.equal(sessionCold.json().login.user.displayName, 'Demo Account');
+});
+
+test('Vercel serverless handler (api/index.ts) processes requests and returns HTTP 200', async (t) => {
+  const prevVercel = process.env.VERCEL;
+  const prevKey = process.env.SCM_SESSION_KEY;
+  process.env.VERCEL = '1';
+  process.env.SCM_SESSION_KEY = 'k'.repeat(43);
+  t.after(async () => {
+    await closeAppForTesting();
+    if (prevVercel !== undefined) process.env.VERCEL = prevVercel;
+    else delete process.env.VERCEL;
+    if (prevKey !== undefined) process.env.SCM_SESSION_KEY = prevKey;
+    else delete process.env.SCM_SESSION_KEY;
+  });
+
+  const server = http.createServer(handler);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const addr = server.address() as { port: number };
+  const res = await fetch(`http://127.0.0.1:${addr.port}/api/health`, {
+    headers: {
+      host: 'steam-cloud-manager.vercel.app',
+      'x-forwarded-host': 'steam-cloud-manager.vercel.app',
+    },
+  });
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as { status: string };
+  assert.equal(body.status, 'ok');
 });

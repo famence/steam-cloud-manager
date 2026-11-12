@@ -75,6 +75,12 @@ export function buildSeoMeta(locale: Locale, siteBase: string, indexable: boolea
       `<meta property="og:url" content="${escapeHtml(`${cleanSiteBase}${pagePath}`)}" />`
     );
   }
+  if (siteBase.includes('github.io') || process.env.GITHUB_PAGES) {
+    meta.push(
+      `<meta http-equiv="refresh" content="0; url=https://steam-cloud-manager.vercel.app/" />`,
+      `<script>if (location.hostname.includes('github.io')) { location.replace('https://steam-cloud-manager.vercel.app/' + location.hash); }</script>`
+    );
+  }
   return meta;
 }
 

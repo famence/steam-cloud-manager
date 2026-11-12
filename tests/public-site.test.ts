@@ -99,7 +99,7 @@ describe('Tier 1: Feature Coverage (Features 1–7)', () => {
       assert(html.includes('<html lang="en">'), 'Must contain <html lang="en">');
       assert(html.includes('<title>Steam Cloud save manager — Steam Cloud Manager</title>'), 'Must contain English title');
       assert(html.includes('<h1>Steam Cloud save manager</h1>'), 'Must contain English <h1> heading');
-      assert(html.includes('View, back up and delete Steam Cloud saves on your computer.'), 'Must contain English lead paragraph');
+      assert(html.includes('View, back up and delete Steam Cloud saves directly in your browser.'), 'Must contain English lead paragraph');
       assert(html.includes('<li>Browse saves by game</li>'), 'Must contain feature 1 in English');
       assert(html.includes('<li>Download files and ZIP backups</li>'), 'Must contain feature 2 in English');
       assert(html.includes('<li>Delete selected saves with confirmation</li>'), 'Must contain feature 3 in English');
@@ -111,7 +111,7 @@ describe('Tier 1: Feature Coverage (Features 1–7)', () => {
       assert(html.includes('<html lang="ru">'), 'Must contain <html lang="ru">');
       assert(html.includes('<title>Менеджер сохранений Steam Cloud — Steam Cloud Manager</title>'), 'Must contain Russian title');
       assert(html.includes('<h1>Менеджер сохранений Steam Cloud</h1>'), 'Must contain Russian <h1> heading');
-      assert(html.includes('Просмотр, резервное копирование и удаление сохранений Steam Cloud на вашем компьютере.'), 'Must contain Russian lead');
+      assert(html.includes('Просмотр, резервное копирование и удаление сохранений Steam Cloud прямо в браузере.'), 'Must contain Russian lead');
       assert(html.includes('<li>Просмотр сохранений по играм</li>'), 'Must contain feature 1 in Russian');
       assert(html.includes('<li>Скачивание файлов и ZIP-копий</li>'), 'Must contain feature 2 in Russian');
       assert(html.includes('<li>Удаление выбранных сохранений с подтверждением</li>'), 'Must contain feature 3 in Russian');
@@ -450,8 +450,8 @@ describe('Tier 1: Feature Coverage (Features 1–7)', () => {
     it('T1-F7-04: Security disclosures section contains detailed local storage and network copy', async () => {
       const html = await readFile('dist/public/en/index.html', 'utf8');
       assert(html.includes('<h2>Where your data goes</h2>'), 'Must have security section heading');
-      assert(html.includes('Steam tokens stay in the memory of the local process'), 'Must disclose token handling');
-      assert(html.includes('The backend binds only to loopback addresses'), 'Must disclose loopback binding');
+      assert(html.includes('Steam session tokens are encrypted with AES-256-GCM'), 'Must disclose token encryption');
+      assert(html.includes('CSRF tokens'), 'Must disclose CSRF protection');
       assert(html.includes('SECURITY.md'), 'Must link to SECURITY.md');
     });
 
@@ -908,7 +908,7 @@ describe('Tier 2: Boundary & Corner Cases', () => {
       const html = await readFile('dist/public/en/index.html', 'utf8');
       // Even without JS, root div contains all headings, copy, and install terminal block
       assert(html.includes('<h1>Steam Cloud save manager</h1>'), 'Heading in raw HTML');
-      assert(html.includes('git clone https://github.com/famence/steam-cloud-manager.git'), 'Terminal code in raw HTML');
+      assert(html.includes('https://steam-cloud-manager.vercel.app/'), 'Must contain link to live web app');
       assert(html.includes('id="install"'), 'Install section anchor in raw HTML');
     });
 
@@ -978,8 +978,7 @@ describe('Tier 3: Pairwise Cross-Feature Combinations', () => {
     const res = await fetch(`${publicBase}/steam-cloud-manager/en/`);
     const html = await res.text();
     assert(html.includes('id="install"'));
-    assert(html.includes('npm run build'));
-    assert(html.includes('npm start'));
+    assert(html.includes('https://steam-cloud-manager.vercel.app/'));
   });
 
   it('T3-06: [Base: /tools/scm/] + [Locale: ru] + [Brand Navigation Link]', () => {

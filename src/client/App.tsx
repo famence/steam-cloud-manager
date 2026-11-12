@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, Cloud, Download, File, Gamepad2, LoaderCircle, RefreshCw, Search, Star, Trash2, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Cloud, Download, File, Gamepad2, LoaderCircle, LogOut, RefreshCw, Search, Sparkles, Star, Trash2, X } from 'lucide-react';
 import type { CloudFile, CloudGame, DeletePlan, DeleteResult, FileListing, GameSummary, SessionInfo } from '../shared/types';
 import { api, ApiError, checkedDownloadUrl, chooseSaveDestination, isCancelledSave, startDownload, streamToSavedFile } from './api';
 import { basename } from './format';
@@ -212,10 +212,42 @@ export default function App() {
   const changeSelection = (next: Set<string>) => { setSelection(next); setPreparedExport(null); };
   const toggleFile = (name: string) => { const next = new Set(selection); if (next.has(name)) next.delete(name); else if (next.size < FILE_LIMIT) next.add(name); changeSelection(next); };
   const togglePage = () => { const next = new Set(selection); for (const file of pageFiles) { if (allOnPage) next.delete(file.name); else if (next.size < FILE_LIMIT) next.add(file.name); } changeSelection(next); };
+  const startDemo = async () => {
+    if (!session || sessionLoading) return;
+    setSessionLoading(true);
+    setSessionError(null);
+    try {
+      const next = await api<SessionInfo>('/api/auth/demo', { body: {}, csrf: session.csrfToken });
+      setSession(next);
+    } catch (error) {
+      setSessionError(error);
+    } finally {
+      setSessionLoading(false);
+    }
+  };
+  const cancelLogin = async () => {
+    if (!session || sessionLoading) return;
+    setSessionLoading(true);
+    try {
+      const next = await api<SessionInfo>('/api/auth/logout', { body: {}, csrf: session.csrfToken });
+      setSession(next);
+    } catch (error) {
+      void readSession();
+    } finally {
+      setSessionLoading(false);
+    }
+  };
   const startLogin = async () => {
-    if (!session) return; setSessionLoading(true); setSessionError(null);
-    try { setSession(await api<SessionInfo>('/api/auth/steam', { body: {}, csrf: session.csrfToken })); }
-    catch (error) { setSessionError(error); } finally { setSessionLoading(false); }
+    if (!session || sessionLoading) return;
+    setSessionLoading(true);
+    setSessionError(null);
+    try {
+      setSession(await api<SessionInfo>('/api/auth/steam', { body: {}, csrf: session.csrfToken }));
+    } catch (error) {
+      setSessionError(error);
+    } finally {
+      setSessionLoading(false);
+    }
   };
   const logout = async () => {
     if (!session || action) return; libraryRequest.current++; setSessionLoading(true);
@@ -272,19 +304,91 @@ export default function App() {
     ? `${countFiles(game.fileCount, locale)} · ${formatBytes(game.totalBytes ?? 0, locale)}`
     : game.cloudSupport === 'unsupported' ? t.unsupported : game.fileCount === 0 ? t.noSaves
       : checking.has(game.appId) ? t.checking : checkFailed.has(game.appId) ? t.checkFailed : t.unknownCloud;
-  return <Shell onHome={() => navigate(null)} account={connected ? session.login.user?.displayName : undefined} onLogout={connected ? () => void logout() : undefined} busy={!!action || sessionLoading}>
+  return <Shell
+    onHome={() => navigate(null)}
+    account={connected ? session.login.user?.displayName : undefined}
+    demo={connected && session.mode === 'demo'}
+    onLogout={connected ? () => void logout() : undefined}
+    busy={!!action || sessionLoading}
+  >
     <main className={`main-content${selectedFiles.length ? ' has-selection' : ''}`}>
-      {!connected ? <section className="login-card">
-        <Cloud size={35} className="login-icon" /><h1>{t.title}</h1><p>{t.description}</p>
-        {session?.mode === 'demo' && <p className="demo-note">{t.demo}</p>}
-        {pending && session.login.qrDataUrl ? <div className="qr-section"><img src={session.login.qrDataUrl} alt="Steam QR" width="224" height="224" /><p>{t.qrInstructions}</p><p className="loading-label"><LoaderCircle size={17} className="spin" />{session.login.status === 'connecting' ? t.connecting : t.waiting}</p></div>
-          : <button className="button button-primary full-width" onClick={() => void startLogin()} disabled={!session || sessionLoading || !!pending}>{sessionLoading || pending ? <LoaderCircle className="spin" size={18} /> : <Gamepad2 size={19} />}{sessionLoading || pending ? t.connecting : session?.mode === 'demo' ? t.demoButton : t.signIn}</button>}
-        {(sessionError || session?.login.error) && <p className="error-message" role="alert">{sessionError ? errorText(sessionError, locale) : t.loginFailed}</p>}
-        {session?.login.status === 'expired' && <p className="error-message">{t.expiredLogin}</p>}
-        {!session && !sessionLoading && <button className="button" onClick={() => void readSession()}>{t.retry}</button>}
-        <p className="helper-text">{t.sessionLocal}</p>
-      </section> : <>
-        {session.mode === 'demo' && <p className="demo-note">{t.demo}</p>}
+      {!connected ? (
+        <section className="login-card">
+          <Cloud size={35} className="login-icon" />
+          <h1>{t.title}</h1>
+          <p>{t.description}</p>
+
+          {pending && session?.login.qrDataUrl ? (
+            <div className="qr-section">
+              <img src={session.login.qrDataUrl} alt="Steam QR" width="224" height="224" />
+              <p>{t.qrInstructions}</p>
+              <p className="loading-label">
+                <LoaderCircle size={17} className="spin" />
+                {session.login.status === 'connecting' ? t.connecting : t.waiting}
+              </p>
+              <button
+                className="button button-ghost full-width"
+                onClick={() => void cancelLogin()}
+                disabled={sessionLoading}
+              >
+                {t.cancel}
+              </button>
+            </div>
+          ) : (
+            <div className="login-actions">
+              <button
+                className="button button-primary full-width"
+                onClick={() => void startLogin()}
+                disabled={!session || sessionLoading || !!pending}
+              >
+                {sessionLoading || pending ? <LoaderCircle className="spin" size={18} /> : <Gamepad2 size={19} />}
+                {sessionLoading || pending ? t.connecting : t.signIn}
+              </button>
+
+              <div className="login-divider">
+                <span>{t.orDivider}</span>
+              </div>
+
+              <button
+                className="button button-secondary full-width demo-button"
+                onClick={() => void startDemo()}
+                disabled={!session || sessionLoading || !!pending}
+              >
+                <Sparkles size={18} />
+                {t.tryDemo}
+              </button>
+            </div>
+          )}
+
+          {(sessionError || session?.login.error) && (
+            <p className="error-message" role="alert">
+              {sessionError ? errorText(sessionError, locale) : t.loginFailed}
+            </p>
+          )}
+          {session?.login.status === 'expired' && <p className="error-message">{t.expiredLogin}</p>}
+          {!session && !sessionLoading && (
+            <button className="button" onClick={() => void readSession()}>{t.retry}</button>
+          )}
+          <p className="helper-text">{t.sessionLocal}</p>
+        </section>
+      ) : (
+        <>
+          {session.mode === 'demo' && (
+            <div className="demo-banner" role="status">
+              <div className="demo-banner-content">
+                <Sparkles size={18} aria-hidden="true" />
+                <span>{t.demoActive}</span>
+              </div>
+              <button
+                className="button button-sm"
+                onClick={() => void logout()}
+                disabled={!!action || sessionLoading}
+              >
+                <LogOut size={14} />
+                {t.signOut}
+              </button>
+            </div>
+          )}
         {notice && <div className={`notice notice-${notice.kind}`} role={notice.kind === 'error' ? 'alert' : 'status'}><div>{noticeText}{!!notice.files?.length && <details><summary>{t.details}</summary>{notice.files.map(name => <p key={name}>{name}</p>)}</details>}</div><button className="icon-button" aria-label={t.close} onClick={() => setNotice(null)}><X size={17} /></button></div>}
         {!plan && preparedExport && <p><a className="button button-primary" href={preparedExport} download>{t.downloadPrepared}</a></p>}
         {selectedId === null ? <>
@@ -316,7 +420,8 @@ export default function App() {
                 </>}
           {!!selectedFiles.length && <div className="bulk-actions"><div className="bulk-summary"><Check size={18} /><span>{countFiles(selectedFiles.length, locale)} · {formatBytes(selectedFiles.reduce((sum, file) => sum + file.size, 0), locale)}</span><button className="icon-button" aria-label={t.clearSelection} onClick={() => changeSelection(new Set())} disabled={!!action}><X size={17} /></button></div><div className="bulk-buttons"><button className="button" onClick={() => void exportFiles()} disabled={!!action || filesLoading}>{action === 'export' ? <LoaderCircle className="spin" size={17} /> : <Download size={17} />}{t.zip}</button><button className="button button-danger" onClick={() => void prepareDelete()} disabled={!!action || filesLoading}>{action === 'plan' ? <LoaderCircle className="spin" size={17} /> : <Trash2 size={17} />}{t.remove}</button></div></div>}
         </>}
-      </>}
+      </>
+      )}
     </main>
     {plan && <DeleteDialog key={plan.planId} plan={plan} error={notice?.kind === 'error' ? noticeText : undefined} deleting={action === 'delete'} exporting={action === 'export'} preparedExport={preparedExport} onClose={() => { if (!action) setPlan(null); }} onDelete={value => void deleteFiles(value)} onBackup={() => void exportFiles(plan.files)} />}
   </Shell>;

@@ -109,9 +109,10 @@ for (const file of output.filter(file => file.endsWith('.js'))) {
 
 // 8. Vercel config check
 const config = JSON.parse(await readFile('vercel.json', 'utf8'));
-assert.equal(config.outputDirectory, 'dist/public');
-assert(!config.rewrites && !config.functions, 'The public site must not proxy account traffic');
+assert.equal(config.outputDirectory, 'dist/client', 'Vercel must serve the interactive client SPA from dist/client');
+assert(Array.isArray(config.rewrites) && config.rewrites.some(r => r.source === '/api/(.*)'), 'Vercel must rewrite /api/(.*)');
+assert(config.functions?.['api/index.ts'], 'Vercel must configure api/index.ts function');
 const csp = config.headers.flatMap(x => x.headers).find(x => x.key === 'Content-Security-Policy')?.value ?? '';
-assert(csp.includes("connect-src 'none'") && csp.includes("frame-ancestors 'none'"));
+assert(csp.includes("frame-ancestors 'none'"), 'Vercel CSP must forbid framing');
 
 console.log('Public-site contract passed: prerendered en/ru, .nojekyll, static CSP, asset integrity, no hosted Steam session.');

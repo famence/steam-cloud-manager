@@ -85,8 +85,22 @@ function SecurityDialog({ onClose }: { onClose: () => void }) {
     <SecurityContent /><div className="dialog-actions"><button className="button" onClick={onClose}>{t.close}</button></div>
   </dialog>;
 }
-export function Shell({ children, publicSite = false, onHome, account, onLogout, busy = false }: {
-  children: ReactNode; publicSite?: boolean; onHome?: () => void; account?: string; onLogout?: () => void; busy?: boolean;
+export function Shell({
+  children,
+  publicSite = false,
+  onHome,
+  account,
+  onLogout,
+  busy = false,
+  demo = false,
+}: {
+  children: ReactNode;
+  publicSite?: boolean;
+  onHome?: () => void;
+  account?: string;
+  onLogout?: () => void;
+  busy?: boolean;
+  demo?: boolean;
 }) {
   const { locale, theme, setLocale, setTheme, t } = usePreferences();
   const [securityOpen, setSecurityOpen] = useState(false);
@@ -99,7 +113,15 @@ export function Shell({ children, publicSite = false, onHome, account, onLogout,
           : <label className="compact-select"><span className="sr-only">{t.language}</span><select value={locale} onChange={e => setLocale(e.target.value as Locale)} aria-label={t.language}><option value="en">EN</option><option value="ru">RU</option></select></label>}
         <label className="compact-select"><span className="sr-only">{t.theme}</span><select value={theme} onChange={e => setTheme(e.target.value as Theme)} aria-label={t.theme}><option value="system">{t.system}</option><option value="light">{t.light}</option><option value="dark">{t.dark}</option></select></label>
         <button className="icon-button" aria-label={t.security} title={t.security} onClick={() => setSecurityOpen(true)}><ShieldCheck size={20} /></button>
-        {onLogout && <><span className="account-name" title={account}>{account}</span><button className="icon-button" aria-label={t.signOut} title={t.signOut} onClick={onLogout} disabled={busy}><LogOut size={19} /></button></>}
+        {onLogout && (
+          <>
+            <span className="account-name" title={account}>{account}</span>
+            {demo && <span className="demo-badge">{t.demoBadge}</span>}
+            <button className="icon-button" aria-label={t.signOut} title={t.signOut} onClick={onLogout} disabled={busy}>
+              <LogOut size={19} />
+            </button>
+          </>
+        )}
       </div>
     </div></header>
     {children}
