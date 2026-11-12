@@ -1,3 +1,4 @@
+import 'lzma';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { FastifyInstance } from 'fastify';
 import { readConfig } from '../src/server/config.js';
