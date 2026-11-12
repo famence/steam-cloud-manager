@@ -11,8 +11,8 @@ function putPreference(key: string, value: string): void {
 }
 function initialLocale(): Locale {
   if (typeof window === 'undefined') return 'en';
-  if (/^\/ru(?:\/|$)/.test(location.pathname)) return 'ru';
-  if (/^\/en(?:\/|$)/.test(location.pathname)) return 'en';
+  if (/(?:^|\/)ru(?:\/|$)/.test(location.pathname)) return 'ru';
+  if (/(?:^|\/)en(?:\/|$)/.test(location.pathname)) return 'en';
   const stored = getPreference('language');
   return stored === 'en' || stored === 'ru' ? stored : navigator.language.toLowerCase().startsWith('ru') ? 'ru' : 'en';
 }

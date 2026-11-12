@@ -5,7 +5,7 @@ export default defineConfig({
   reporter: 'list', use: { baseURL: 'http://127.0.0.1:3110', locale: 'en-US', trace: 'off' },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1200, height: 850 } } }],
   webServer: [
-    { command: 'npm start', cwd: process.cwd(), url: 'http://127.0.0.1:3110/api/health', env: { PORT: '3110', DEMO_MODE: 'true' }, reuseExistingServer: false },
-    { command: 'node scripts/preview-public.mjs', cwd: process.cwd(), url: 'http://127.0.0.1:3111/en/', reuseExistingServer: false },
+    { command: 'npm start', cwd: process.cwd(), url: 'http://127.0.0.1:3110/api/health', env: { PORT: '3110', DEMO_MODE: 'true' }, reuseExistingServer: !process.env.CI },
+    { command: 'node scripts/preview-public.mjs', cwd: process.cwd(), url: 'http://127.0.0.1:3111/en/', reuseExistingServer: !process.env.CI },
   ],
 });

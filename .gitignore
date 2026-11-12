@@ -11,3 +11,6 @@ blob-report/
 .DS_Store
 artifacts/
 .vercel/
+.idea/
+.agents/
+
